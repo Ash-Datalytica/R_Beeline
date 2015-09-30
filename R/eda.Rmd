@@ -1,0 +1,255 @@
+---
+title: "EDA"
+author: "Alexey Shovkun"
+date: "23 сентября 2015 г."
+output: html_document
+---
+
+```{r init, echo=FALSE, message=FALSE}
+#install.packages ("data.table")
+#install.packages ("AppliedPredictiveModelling") # недоступен для R 3.0.2
+#install.packages ("mice")
+#install.packages ("RANN")
+require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+require(Hmisc) #cut2
+require(mice)
+#require(parallel) #detectCores()
+#require(doSNOW)
+
+fileTrain <- "../data/train.csv" 
+#transparentTheme(trans = .4)
+
+#nCores <- detectCores()
+##nCores <-6
+#cl<-makeCluster(nCores) # Assign number of cores to use
+#registerDoSNOW(cl) # Register the cores.
+```
+
+## Загрузка данных
+
+Считываем обучающие данные. Описание формата: 
+  В файле train.csv содержится информация для построения модели. 
+  Формат строк: признаки (x0, ..., x61) и целевая переменная — y.
+
+```{r loadData, echo=FALSE}
+#colclasses = c(rep("Factor",6), "integer", ""
+dfTrain <- fread(fileTrain, sep=",", header = T, stringsAsFactors=T
+               , na.strings=c("NA","") # считываем пустые строки как NA
+                 #, nrows=1000 
+               ,data.table=F # считать в data frame
+               #, colClasses = colClasses
+               )
+# Переводим строки в факторы
+colClasses <- sapply(dfTrain, class)
+#table(colClasses)
+whichCharacter <- (colClasses =="character")
+whichNumeric <- (colClasses == "numeric")
+whichInteger <- (colClasses == "integer")
+whichInteger[63] = FALSE # исключаем y из списка
+#table(dfTrain[1], useNA="ifany")
+#levels(factor(dfTrain[,1], exclude=NULL))
+
+# Пример NA в факторе
+# dfMOMos$sex <- factor(dfMOMos$sex, ordered=FALSE,
+#                       exclude = NULL, # чтобы NA был уровнем фактора
+#                       levels=c(NA, "женщина", "мужчина"))
+# levels(dfMOMos$sex)[1] <- "Пол не известен"
+#class(sapply(dfTrain[whichCharacter], function(x){factor(x, exclude=NULL)})) #matrix
+#dfTrain[whichCharacter] <- as.data.frame(sapply(dfTrain[whichCharacter], function(x){factor(x, exclude=NULL)}))
+dfTrain[whichCharacter] <- as.data.frame(sapply(dfTrain[whichCharacter], as.factor)) # Пока оставляем NA как NA
+#dfTrain[whichCharacter] <- sapply(dfTrain[whichCharacter], addNA)
+#class(dfTrain[,1])
+#levels(dfTrain[,1])
+#table(dfTrain[,1])
+
+uniqueCount <- sapply(dfTrain, function(x){length(unique(x))})
+uniqueCount[whichCharacter]
+longCategorical <- (uniqueCount > 50) & whichCharacter # маска "длинных" категорийных переменных
+```
+В таблице выше показано количество уникальных значений для категорийных переменных. Видим, что некоторые категорийные переменные содержат много категорий, что может затруднять процесс вставки пустых значений (imputation).
+
+Целевую переменную (возрастнаю группа) оформляем как упорядоченную категорийную переменную (фактор).
+
+```{r processY, echo=FALSE}
+dfTrain$y <- as.ordered(dfTrain$y) #Возрастная группа - упорядоченный фактор
+#class(dfTrain$y)
+table(dfTrain$y)
+```
+
+Целевая переменная "Возрастная группа" содержит неравномерное распределение количества значений по группам. Видимо, группа 1 соответствет младшему возрасту, а группа 6 наиболе старшему, поэтому большее количество абонентов имеет группы 2, 3 и 4.
+
+
+Обучающая выборка содержит **`r nrow(dfTrain)`** строк. Посмотрим на данные в целом.
+
+```{r trainSummary, echo=FALSE}
+summary(dfTrain)
+```
+
+Видим, что часть параметров являются категорийными (зашифрованные строки), причем некоторые состоят из небольшого количества категорий, а некоторые содержат большое количество разных категорий (близкое кразмеру выборки):
+  
+  - x2 - 3 категрии, одна из которых пробел или пустое значение.  
+  - х0 - потенциально большое кол-во категорий (здесь видим, что больше 6).  
+ 
+Также видим, что числовые поля содержат пустые значения (NA). Однако, доля пустых полей в каждом параметре отностительно невелика (<10%), поэтому не будем откидывать поля (столбцы) из-за того, что в них содержатся пустые значения. Вместо этого попробуем заместить пустые значения на непустые.
+
+Дальнейшие действия:
+
+1. Посмотреть на корреляцию y и параметров х0 - х60.  
+2. Избавиться от NA в строках. Видится 2 варианта: отдельная категория и KNN.  
+3. Избавиться от NA в числах.  Видится 2 варианта: KNN и медиана.
+4. Выполнить нормализацию
+
+
+## Разведочный анализ данных
+
+###Переменные типа integer
+```{r featureSet1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE }
+featurePlot (x = dfTrain[whichInteger],
+             y = dfTrain$y,
+             plot="pairs", auto.key=list(columns=2))
+```
+
+Возможно, это булевы флаги, проверим.
+```{r featureIntegers, echo=FALSE, warning=FALSE, message = FALSE}
+table(dfTrain[whichInteger], useNA = "always")
+dfTrain[whichInteger] <- as.data.frame(sapply(dfTrain[whichInteger], as.factor)) 
+```
+Действительно, эти переменные являются флагами и всегда имеют значение 0 или 1, не имеют значений NA. оформим их как категорийные переменные.
+
+###Переменные типа numeric (действительные числа)
+Графики строятся Слишком медленно на полной обучающей выборке, поэтому далее для разведочного анализа будем использовать 0.5% данных - 1000 записей.
+
+```{r featureSet2, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrain$y, p = 0.005, list = FALSE, times = 1)
+#sum(whichNumeric) #41 шт
+nChunks <- 7
+parts <- cut2(1:sum(whichNumeric), g=nChunks, onlycuts=TRUE  )
+parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
+for (i in 1:nChunks) {
+    fp <- featurePlot (x = dfTrain[inEDA,whichNumeric][parts[i]:parts[i+1]-1],
+             y = dfTrain$y,
+             plot="pairs", auto.key=list(columns=2))
+    print (fp)
+    #cat(i)
+}
+
+```
+
+Наблюдения:
+
+1. Между некоторыми переменными есть созависимости (линии и треугольники на графиках), например, х24-х25, х41-х42, х53-х54...
+2. Некоторые переменные сдвинуты - например, значения сосредоточены около нижней границы диапазона, а около верхней стоит всего несколько значений. Необходима нелинейная нормализация, например логарифмическая. Например, х44, х55.
+3. Визуально сложно выделить возрастные группы, но на некоторых квадратах можно увидеть примерное разделение. Это означает, что точность предсказания возрастной группы будет 80-90%. На текущий момент лучшая точность в соревновании - 77.26%.
+
+## Отбор значимых переменных
+
+Определяем малоинформативные параметры, содержащие маленькое количество информации, т.е. имеющие в основном одинаковое значение.
+```{r nzv, echo=F, message=F}
+nzv <- nearZeroVar(dfTrain, saveMetrics= TRUE)
+nzv[nzv$nzv,] # вариация около 0. При перекрестной проверке могут получиться выборки с нулевой вариацией.
+#nzv[nzv$zeroVar,]
+nzvIDX <- which (nzv$nzv)
+#nzvFeatures <- colnames(dfTrain)[nzvIDX]
+```
+
+Далее не будем иcпользовать эти параметры для предсказания Возрастной группы.
+
+Проанализируем наличие коррелирующих между собой параметров. Это можно сделать только для числовых параметров?
+```{r highCorr, echo=F, warning=F} 
+descrCor <- cor(dfTrain[whichNumeric], use="complete.obs")
+summary(descrCor[upper.tri(descrCor)])
+
+# highlyCorIDX <- findCorrelation(descrCor, cutoff = .8)
+
+# descrCor2 <- cor(dfTrain[setdiff(which(whichNumeric), highlyCorIDX)], use="complete.obs")
+# summary(descrCor2[upper.tri(descrCor2)])
+```
+
+Задание: решить, что с ними делать. Вероятно. стоит отказаться от их использования в дальнейшем.
+
+## Заполнение пустых значений
+
+Подготовим два набора данных, в которых используем разные принципы заполнения пустых значений:
+
+1. Категорийные переменные заменяем на новыу категорию "Пусто", числовые переменные заполним константой, равной медиане. Результаты сохраним в файл **train_ConstMedian.rds**.  
+....2. Категорийные переменные снабдим дополнительным значением и числовые переменные заполним методом К-ближайших соседей (kNN).
+
+
+Обзор тренировочного набора данных после преобразований из п.1.
+``` {r imputeData1, echo=F, warning=F}
+# Номера столбцов для замены пустых значений. Исключаем y, неинформативные и длинные Категорийные
+imputeIDX <- setdiff(1:62, union(nzvIDX, which(longCategorical)))
+imputeIDXNumeric <- intersect(imputeIDX, which(whichNumeric))
+#sapply(dfTrain, class)
+
+#require(randomForest)
+#dfTrainImp <- rfImpute(dfTrain[idImpute], dfTrain$y, iter=5, ntree=300) # Can not handle categorical predictors with more than 53 categories. Потом не хватает ОЗУ
+
+# избавляемся от NA в числовых параметрах
+# caret:preProcess не работает с категорийными переменными
+# knnImpute - cannot impute when all predictors are missing in the new data point
+# medianImpute  - работает
+# bagImpute - долго? попробовать еще раз
+#preNumericKNN <- preProcess(dfTrain[imputeIDXNumeric], method="knnImpute", outcome = dfTrain$y, na.remove=TRUE) 
+#dfImpNumeriKNN <- predict(preNumericKNN, dfTrain[imputeIDXNumeric]) 
+#Посмотрим строки, у который все значения NA
+#sum(apply(dfTrain[imputeIDXNumeric], 1, function(x)all(is.na(x)) )) # 11 строк, у которых все числовые значения пустые
+
+preNumericMedian <- preProcess(dfTrain[imputeIDXNumeric], method="medianImpute", outcome = dfTrain$y, na.remove=TRUE) 
+dfImpNumericMedian <- predict(preNumericMedian, dfTrain[imputeIDXNumeric])
+
+
+## mice (numeric $ categorical)
+# dfTrainImp <- mice(dfTrain[imputeIDX[1:10]], seed=1234
+#                    #, method= "cart" #fastpmm, sample, cart
+#                    , defaultMethod = c("mean", "logreg", "polyreg", "polr") #c("fastpmm", "logreg", "polyreg", "polr")
+#                    ) #fastpmm, cart,logreg.boot , method="polyreg"
+# plot(dfTrainImp)
+# colCategorical <- setdiff(colnames(dfTrain)[!whichCharacter & !whichInteger], "y")
+
+## transcan()
+# formula <- paste0("~",paste0(colnames(dfTrain), collapse = "+"))
+# t <- transcan (~x0+x1+x2+x3+x4+x5+x6+x7+x8+x9+x10+x11+x12+x13+x14+x15+x16+x17+x18+x19+x20+x21+x22+x23+x24+x25+x26+x27+x28+x29+x30+x31+x32+x33+x34+x35+x36+x37+x38+x39+x40+x41+x42+x43+x44+x45+x46+x47+x48+x49+x50+x51+x52+x53+x54+x55+x56+x57+x58+x59+x60+x61+y,  categorical =  colCategorical, data=dfTrain) #Error: cannot allocate vector of size 15.7 Gb
+
+## Для категорийных переменных заменяем все NA на новое строковое значение "не определено"
+replaceNA <- function (df, value = "Не определено") {
+    for (col in colnames(df)){
+        df[col][is.na(df[col])] <- value
+    }
+    return (df)
+}
+imputeIDXCategoric <- which(whichCharacter)
+dfImpCategoricalConstant <- as.data.frame(sapply(dfTrain[,imputeIDXCategoric], as.character), stringsAsFactors = FALSE)
+dfImpCategoricalConstant <- replaceNA(dfImpCategoricalConstant, "Не определено")
+dfImpCategoricalConstant <- as.data.frame(sapply(dfImpCategoricalConstant, as.factor)) 
+#View(dfImpCategoricalConstant)
+#summary(dfImpCategoricalConstant)
+
+# название: первый символ показывает категорийные переменные "C" - замена на новую константу
+# второй символ показывает числовые прееменные "M" - замена пустых значений на медиану
+dfTrainCM <- dfTrain
+dfTrainCM[imputeIDXCategoric] <- dfImpCategoricalConstant
+dfTrainCM[imputeIDXNumeric] <- dfImpNumericMedian
+summary(dfTrainCM)
+#class(dfTrainCM[,1]) #factor
+
+saveRDS (dfTrainCM, "../data/train_ConstMedian.rds") #Сохраняем файл без пустых значений
+
+
+```
+
+TODO: 
+
+  - аналогичная обработка набора тестовых данных test.
+  - найти более сильный способ замены пустых значений в категорийных переменных.
+    - Перегруппировать категорийные переменные в квантильные группы.
+  - найти способ применить метод KNN к числовым переменным.
+
+
+```{r stopCluster, echo=FALSE, warning=FALSE, message = FALSE, cache=FALSE}
+#stopCluster(cl) # Explicitly free up cores again.
+
+```

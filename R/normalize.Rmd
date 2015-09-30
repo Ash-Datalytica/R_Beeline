@@ -1,0 +1,74 @@
+---
+title: "Normalize"
+author: "Alexey Shovkun"
+date: "28 сентября 2015 г."
+output: html_document
+---
+
+```{r init, echo=FALSE, message=FALSE}
+#require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+#require(Hmisc) #cut2
+#require(mice)
+#require(parallel) #detectCores()
+#require(doSNOW)
+
+dfTrainCM <- readRDS("../data/train_ConstMedian.rds")
+```
+
+Необходимо нормализовать значения параметров типа numeric. Рассмотрим 2 варианта нормализации:
+
+1. все переменные нормализуем линейно. Либо в диапазон [0,1], либо [-1,1].
+2. Подбираем разные варианты нормализации для разных переменных. в том чиисле и нелинейную нормализацию.
+
+# Линейная нормализация
+
+```{r normLinear, echo=FALSE}
+whichNumeric <- sapply(dfTrainCM, class)=="numeric" # Булева маска числовых столбцов
+colNumeric = colnames(dfTrainCM)[which(whichNumeric)] # Список имен числовых столбцов
+
+preNormLinear <- preProcess (dfTrainCM[colNumeric], method=c("range") )
+#preNormLinear$ranges
+dfNormNumeric <- predict(preNormLinear, dfTrainCM[colNumeric])
+summary (dfNormNumeric)  
+
+# NR означает линейно нормализованные данные (NormRange)
+dfTrainCMNR <- dfTrainCM
+dfTrainCMNR[colNumeric] <- dfNormNumeric
+#class(dfTrainCMNR[,1])
+
+saveRDS (dfTrainCMNR, "../data/train_ConstMedianRange.rds")
+```
+
+Посмотрим графически на результаты нормализации на 0.5% данных.
+
+```{r normLinearScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrainCM$y, p = 0.005, list = FALSE, times = 1)
+#ncol(dfNormNumeric) #41 шт
+nChunks <- 7
+parts <- cut2(1:ncol(dfNormNumeric), g=nChunks, onlycuts=TRUE  )
+parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
+for (i in 1:nChunks) {
+    fp <- featurePlot (x = dfNormNumeric[inEDA,][parts[i]:parts[i+1]-1],
+             y = dfTrainCM$y,
+             plot="pairs", auto.key=list(columns=2))
+    print (fp)
+    #cat(i)
+}
+
+```
+
+# выборочная нормализация
+
+TODO:
+
+1. Вынести построение Scatterplot в отдельную функцию.
+
+
+В результате визуального анализа графиков разброса из этапа Разведочного анализа данных (EDA) определяем следующий алгоритм нормализации:
+
+  - Линейная нормализация в диапазон [0,1] 
+  - Линейная нормализация в диапазон [-1,1] 
+  - Нелинейная нормализация в диапазон [-1,1] (метод YeoJohnson): x8

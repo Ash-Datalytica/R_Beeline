@@ -1,0 +1,463 @@
+---
+title: "SelectModel"
+author: "Alexey Shovkun"
+date: "29 сентября 2015 г."
+output: html_document
+---
+
+
+```{r init, echo=FALSE, message=FALSE}
+#require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+#require(Hmisc) #cut2
+#require(mice)
+require(parallel) #detectCores()
+require(doSNOW)
+require (ggplot2)
+require(gridExtra)
+require(rattle) #fancyRpartPlot
+require(reshape2) #melt
+
+nCores <- detectCores() 
+#nCores <- 6
+cl<-makeCluster(nCores - 1) # оставляем одно ядро на инфраструктуру и параллельные процессы
+registerDoSNOW(cl) # Register the cores.
+
+dfTrain <- readRDS("../data/train_ConstMedianRange.rds")
+#class(dfTrain[,1]) #factor
+
+dfResults <- NULL
+```
+
+
+
+Выделяем обучающую и тестовую выборки. Проверку качества модели в процессе подбора её параметров будем делать с использованием метода перекрестной проверки (cross validation) на обучающей выборке. Тестовая выборка будет использована **только** для оценки качества результирующей модели.
+
+```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
+set.seed(20150415)
+
+inTrain <- createDataPartition(dfTrain$y, p = .75, list = FALSE, times = 1)
+dfTest <- dfTrain[-inTrain,]
+dfTrain <- dfTrain[inTrain,]
+#summary(dfTrain)
+```
+
+Размеры выборок: 
+    
+- обучающая: `r nrow(dfTrain)` экземпляров.
+
+- проверочная: отсутствует, т.к. применяем кросс-валидацию.
+
+- тестовая: `r nrow(dfTest)` экземпляров.
+
+# Выбор используемых параметров
+Для обучения модели мы можем использовать не все доступные параметры, в частности мы исключаем низкоинформативные параметры. 
+
+Исключаем следующие параметры с низкой информативностью:
+```{r nzv, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain)
+## nero zero features
+nzv <- nearZeroVar(dfTrain, saveMetrics= TRUE)
+nzv[nzv$nzv,] # вариация около 0. При перекрестной проверке могут получиться выборки с нулевой вариацией.
+#nzv[nzv$zeroVar,]
+idxNZV <- which (nzv$nzv)
+nzvFeatures <- colnames(dfTrain)[idxNZV]
+```
+
+При построении модели каждая категориальная переменная разворачиваются в набор бинарных переменных (со занчениями 0 ли 1), число которых равно количеству категорий у категориальной переменной. Посмотрим на количество уникальных значений (категорий) для наших категориальных переменных:
+```{r importantFeatures, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+## все столбцы
+#class(dfTrain[,1]) #factor
+colClasses <- sapply(dfTrain, class)
+idxCategorical <- which(colClasses == "factor") # у "y"== "ordered", поэтому его в этом списке нет 
+categoricalFeatures <- colnames(dfTrain)[idxCategorical]
+
+uniqueCount <- sapply(dfTrain, function(x){length(unique(x))})
+uniqueCount[idxCategorical]
+idxLongCat <- intersect(idxCategorical, which(uniqueCount > 11)) # Категорийная И Длинная
+longCatFeatures <- colnames(dfTrain)[idxLongCat]
+
+allFeatures <- colnames(dfTrain)[!nzv$nzv] # включая "y""
+importantFeatures1 <- setdiff(allFeatures, longCatFeatures) # включая "y""
+```
+
+Исключаем из рассмотрения следующие Категорийные параметры, у которых количество категорий >11: **`r longCatFeatures`**.
+
+
+
+### Boosted Generalized Linear Model (glmboost)
+
+Это продвинутый (boosted) вариант логистической регресии, один из самых базовых методов классификации, поэтому начнем с него. Модель строим на основе **всех параметров** пользователя, поскольку это, во-первых, дает немного лучшие результаты, а во-вторых, что самое важное, позволит нам получить альтернативный набор наиболее значимых параметров пользователя для построения других моделей.
+
+```{r trainGLMBoost, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=F}
+#View (dfTrain)
+#View(dfTrain[importantFeatures1])
+# проверка на NA
+#sum(apply (dfTrain, 2, function(x)sum(is.na(x)))) #0 - нет ни одного NA
+set.seed(20150417)
+modGLMBoost <- train (y ~ ., method="glmboost", 
+                      #data = dfTrain [allFeatures], #Error in serialize(data, node$con) : error writing to connection - возможно из-за слишком большой размерности датасета (развертка длинных категорийных переменных)]]])
+                      data = dfTrain[importantFeatures1], 
+                      trControl = trainControl(method = "cv", number=10, repeats=10),
+                      tuneGrid = expand.grid(
+                                mstop = c(10,100),
+                                prune="no"
+                                 )
+                      #tuneLength=7
+)
+modGLMBoost
+#modGLMBoost$finalModel
+#varImp(modGLMBoost)
+ggplot(modGLMBoost)
+
+```
+
+Несмотря на невысокую точность модели, проведем ее анализ с целью определить, какие параметры пользователя оказывали наибольшее влияние на результат.
+
+```{r interpretGLMBoost, echo=FALSE, warning=FALSE, message = FALSE, eval=F}
+#sort(summary(modGLMBoost$finalModel)$selprob, decreasing = TRUE)
+#В начале списка приведены параметры, которые чаще всего выбирались в качестве используемых для предсказания. 
+# tmp <- sapply((summary(modGLMBoost$finalModel)$object$coef()),as.vector)
+# tmp[order(abs(tmp), decreasing = TRUE)]
+# В начале списка приведены параметры, которые оказывают наибольшее влияние на класс пользователя. Отрицательные значения означают отрицательное влияние, например, чем выще доля отзывов с рейтингом 1*, тем ниже класс пользователя, т.е. тем выше вероятность. что это не-ВИП пользователь. 
+
+#require(caret)
+#debugonce(varImp)
+varImp(modGLMBoost)
+
+```
+
+Проведем анализ сдвига/разброса модели на основе Bossted GLM с параметрами:
+
+- mstop = **`r #modGLMBoost$bestTune$mstop`**,  
+- prune = **`r #modGLMBoost$bestTune$prune`**.
+
+```{r biasAndVarianceGLMBoost, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=F}
+set.seed(1234)
+res <- data.frame()
+res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.3), nrow(dfTrain), length.out=25)) %dopar% {
+    rows <- sample (1:nrow(dfTrain),m)    
+    mod <- caret::train (class ~ ., method="glmboost", 
+                  data = dfTrain[allFeatures][rows, ],
+                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                  tuneGrid = data.frame(mstop = modGLMBoost$bestTune$mstop,
+                                        prune = modGLMBoost$bestTune$prune))
+    predictionsTrain <- predict (mod, newdata = dfTrain[allFeatures][rows, ])
+    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]    
+    predictions <- predict (mod, newdata = dfTest)
+    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
+    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+}
+
+ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+    geom_line(size=1) + geom_point(size=5) +
+    xlab("Размер обучающей выборки (m)") + 
+    ylab ("Ошибка (1-Accuracy)") + ggtitle("Алгоритм Bossted GLM (glmboost)")+
+    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Boosted Generalized Linear Model", 
+                          accuracy=modGLMBoost$results$Accuracy[as.numeric(rownames(modGLMBoost$bestTune)[1])],
+                        variance = "Низкий")
+                    )
+```
+
+Из графика видим, что модель не страдает от переобучения и показанная ею точность в районе 75-80% является ее "нормальной" точностью (сдвигом) для заданных условий. Уменьшить сдвиг этой модели можно за счет: 
+
+ - применения метода boosting (уже),
+ - добавления параметров пользователя.
+ 
+Хотя логистическая регрессия в сложных задачах **может** давать не самую высокую точность предсказания, она неплохо работает в нашем случае, а также она позволяет неплохо выбрать наиболее значимые параметры пользователя для задачи классификации ВИП/не-ВИП. При обучении других более сложных моделей помимо отобранных ранее с помощью генетического алгоритма набора параметров будем также пробовать альтернативый набор, состоящий из 30-ти параметров, которые оказались наиболее информативными при построении логистической регрессии.
+
+```{r importantFeatures2, echo=FALSE, warning=FALSE, message = FALSE, eval= F}
+importantFeatures2 <- c("class",
+                        rownames(varImp(modGLMBoost)$importance)
+                        [order(varImp(modGLMBoost)$importance$X0, decreasing=TRUE)][1:30])
+
+#intersect (importantFeatures,importantFeatures2)
+importantFeatures2
+```
+
+### Дерево решений (Decision Tree, rpart)
+
+Потерпели неудачу с Boosted GLM. попробуем построить простую модель - дерево решений.
+
+Применяем метод Cost-Sensitive Classification And Regression Tree (CART), чтобы иметь возможность противостоять потенциально высокому разбросу (переобучению) модели за счет параметра Cost.
+
+```{r trainTree, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain)
+
+#minBucket <- 5
+set.seed(12345)
+modDT <- train (y ~ ., method="rpart", 
+                data = dfTrain [importantFeatures1], #73.6
+                #data = dfTrain [allFeatures], #?, не вписались в 13Гб ОЗУ
+                #preProcess= "spatialSign", #"pca"
+                # minbucket = minBucket,
+                trControl = trainControl(method = "cv", number=10, repeats=10),
+                tuneLength= 10)
+#modDT
+modDT$finalModel
+#summary(modDT$finalModel)
+varImp (modDT)
+ggplot(modDT)
+fancyRpartPlot(modDT$finalModel)
+acc <- modDT$results[(modDT$results$cp == modDT$bestTune$cp), "Accuracy"]    
+
+
+#Результаты почти как у rpart. C50 требует меньше ОЗУ(?) и дает более глубокое дерево, а rpart можно более симпатично отрисовать.
+#Проверка разброса показала большой разрыв между кривыми для тренировочной и тестовой выборки (модель недообучается)
+#поэтому останавливаемся на rpart
+# set.seed(20150417)
+# modDT2 <- train (y ~ ., method="C5.0Tree", 
+#                 #data = dfTrain [importantFeatures1], # 71.4
+#                 #data = dfTrain [allFeatures], # 13Гб ОЗУ не хватило 
+#                 trControl = trainControl(method = "cv", number=10, repeats=10)
+#                 )
+# modDT2 
+# modDT2$finalModel
+# summary( modDT2$finalModel)
+# #plot(modDT2$finalModel) #почему ошибка?
+# #ggplot(modDT2)
+# modDT2$results$Accuracy 
+# acc <- modDT2$results$Accuracy 
+
+```
+
+Получаем неплохую точность определения возрастной группы пользователей ~73%. Смущает факт. что в модели используется всего несколько переменных для определения возрастной группы. Возможно, это ее слабое место, ограничивающее максимальную достижимую точность. 
+
+Проведем анализ сдвига/разброса на основе Дерева решений c параметрами:
+
+ - cp = **`r modDT$bestTune$cp`**.
+ 
+```{r biasAndVarianceDT, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+set.seed(1234)
+#library(caret)
+res <- data.frame()
+res <- foreach  (m = ceiling(seq ((nrow(dfTrain)*0.3), nrow(dfTrain), length.out=10)), 
+                 .combine=rbind) %dopar% {    
+                     #m=84
+    rows <- sample (1:nrow(dfTrain),m)    
+    mod <- caret::train (y ~ ., 
+                         method="rpart", 
+                         #method="C5.0Tree", # получется variance=high
+                  data = dfTrain[importantFeatures1][rows, ],
+                  #minbucket = minBucket, 
+                  trControl = caret::trainControl(method = "cv", number=10, repeats=5)
+                 #,  tuneGrid = data.frame(cp=modDT$bestTune$cp)
+                  )    
+    
+    predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures1][rows, ])
+    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$y[rows], positive="1")$overall[1]
+    predictions <- predict (mod, newdata = dfTest)
+    accTest <- caret::confusionMatrix(predictions,dfTest$y, positive="1")$overall[1]
+    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+}
+
+ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+    geom_line(size=1) + geom_point(size=5) +
+    xlab("Размер обучающей выборки (m)") + 
+    ylab ("Ошибка (1-Accuracy)") + ggtitle("Дерево решений (rpart)")+
+    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Decision Tree (rpart)", accuracy=acc,
+                                variance="Низкий"))
+```
+
+Этот график показывает низкий уровень разброса модели, поскольку графики сходятся. Графики еще не сошлись, что означает, что увеличение размера обучающей выборки может повысить точность модели. Предельной точностью данной модели будет **~74%**, которую мы видим на графике для тестовой выборки при максимальных значениях её размера. 
+
+### Случайный лес (Random Forest, rf)
+
+```{r trainRandomForest, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain[importantFeatures])
+#str(dfTrain[importantFeatures])
+nPredictors = length(importantFeatures1) - 1 # из-за y
+#nPredictors = length(allFeatures)#ncol(dfTrain)-1
+nTree <- 500
+set.seed(1234)
+modRF <- train (y ~ ., method="rf", 
+                data = dfTrain [importantFeatures1], #
+                #data = dfTrain [importantFeatures2], #
+                #data = dfTrain [allFeatures], #
+                trControl = trainControl(method = "cv", number=10, repeats=10),
+                #количетсво деревьев в лесу.
+                #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
+                ntree= nTree, 
+                tuneGrid = expand.grid(mtry=c(
+                    ceiling(sqrt(nPredictors)/5),
+                    ceiling(sqrt(nPredictors)/4),
+                    ceiling(sqrt(nPredictors)/3),
+                    ceiling(sqrt(nPredictors)/2),
+                    ceiling(sqrt(nPredictors)),
+                    ceiling(sqrt(nPredictors))*2
+                    , ceiling(nPredictors/3)
+                    , ceiling(nPredictors/2)
+                    , ceiling(nPredictors*2/3)
+                    , nPredictors))
+                #tuneLength=40
+)
+modRF
+ggplot(modRF)
+#modRF$finalModel
+plot(modRF$finalModel)
+#varImp(modRF)
+acc <- modRF$results$Accuracy[as.numeric(rownames(modRF$bestTune)[1])]
+
+paramRF <- modRF$bestTune$mtry
+```
+
+Случайный лес показывает несколько меньшую точность по сравнению с деревом решений, поскольку он содержит усредненную оценку от **`r nTree`** деревьев. Зато менее вероятно, что эта модель переообучена, т.е. мы ожидаем, что она с большей вероятностью будет показывать такую же точность на новых данных по сравнению с деревом решений.
+
+Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =`r paramRF`.
+```{r biasAndVarianceRF, echo=FALSE, warning=FALSE, message = FALSE, cache=T}
+set.seed(1234)
+#library(caret)
+res <- data.frame()
+res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out=10), 
+                 .combine=rbind) %dopar% {    
+                     #m=39
+    rows <- sample (1:nrow(dfTrain),m)    
+    mod <- caret::train (class ~ ., method="rf", 
+                  data = dfTrain[importantFeatures][rows, ],
+                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                  tuneGrid = data.frame(mtry=paramRF)
+                  )    
+    predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures][rows, ])
+    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]
+    predictions <- predict (mod, newdata = dfTest)
+    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
+    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+}
+
+ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+    geom_line(size=1) + geom_point(size=5) +
+    xlab("Размер обучающей выборки (m)") + 
+    ylab ("Ошибка (1-Accuracy)") + ggtitle("Random Forest")+
+    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Random Forest", 
+                          accuracy = acc, variance="Очень высокий"))
+
+```
+
+График показывает. что можель имеет высокий разброс, то есть переобучена. Чтобы побороть этот недостаток, можно применть следующее:
+
+ - регуляризация (см. далее),
+ - метод bagging,
+ - больше данных,
+ - сокращение (отбор) параметров.
+
+### Случайный лес c регуляризацией (RRF)
+
+Дерево решений дало неплохой результат в качестве отправной точки. Попробуем усилить ее за счет применения модели Случайный лес.
+
+```{r trainRRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+nTree <- 300
+nPredictors = length(importantFeatures1)
+#nPredictors = length(importantFeatures2)
+#nPredictors = length(allFeatures)#ncol(dfTrain)-1
+
+#guided regularized random forest, help (RRF)
+# impRF <- modRF$finalModel$importance
+# impRF <- impRF[,"MeanDecreaseGini"]
+# imp <- impRF/(max(impRF))#normalize the importance score
+# gamma <- 0.5
+# coefReg <- (1-gamma)+gamma*imp #weighted average
+set.seed(1234)
+modRRF <- train (class ~ ., method="RRF", 
+                data = dfTrain [importantFeatures], #74.3
+                #data = dfTrain [importantFeatures2], #68.5
+                #data = dfTrain [allFeatures], #72.1
+                trControl = trainControl(method = "cv", number=10, repeats=10),
+                #количетсво деревьев в лесу.
+                ntree = nTree, 
+                tuneGrid = expand.grid(mtry=c(
+                    ceiling(sqrt(nPredictors)/5),
+                    ceiling(sqrt(nPredictors)/4),
+                    ceiling(sqrt(nPredictors)/3),
+                    ceiling(sqrt(nPredictors)/2),
+                    ceiling(sqrt(nPredictors)),
+                    ceiling(sqrt(nPredictors))*2
+                    , ceiling(nPredictors/3)
+                    , ceiling(nPredictors/2)
+                    , ceiling(nPredictors*2/3)
+                    , nPredictors),
+                    #the coefficient(s) of regularization. A smaller coefficient may lead to a smaller feature subset, i.e. there are fewer variables with non-zero importance scores. coefReg must be either a single value (all variables have the same coefficient) or a numeric vector of length equal to the number of predictor variables. default: 0.8
+                    coefReg=c(0.6,0.7,0.8), #побольше, чтобы использовать побольше параметров
+                    coefImp=c(0, 0.1, 0.5, 1))
+                #tuneLength=3
+)
+#modRRF
+ggplot(modRRF)
+#modRRF$finalModel
+plot(modRRF$finalModel)
+varImp(modRRF)
+acc <- modRRF$results[(modRRF$results$mtry == modRRF$bestTune$mtry) & 
+                (modRRF$results$coefReg == modRRF$bestTune$coefReg) &
+                (modRRF$results$coefImp == modRRF$bestTune$coefImp), "Accuracy"] 
+acc
+
+```
+
+Проведем анализ сдвига/разброса Случайного леса с регуляризацией c параметрами:
+ 
+ - ntrees = **`r nTree`**,  
+ - mtry = **`r modRRF$bestTune$mtry`**,  
+ - coefReg = **`r modRRF$bestTune$coefReg`**,  
+ - coefImp = **`r modRRF$bestTune$coefImp`**.
+  
+```{r biasAndVarianceRRF, echo=FALSE, warning=FALSE, message = FALSE, cache=T}
+set.seed(1234)
+#library(caret)
+res <- data.frame()
+res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out=10), 
+                 .combine=rbind) %dopar% {    
+                     #m=39
+    rows <- sample (1:nrow(dfTrain),m)    
+    mod <- caret::train (class ~ ., method="RRF", 
+                  data = dfTrain[importantFeatures][rows, ],
+                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                  ntree = nTree,
+                  tuneGrid = data.frame(mtry=modRRF$bestTune$mtry,
+                                        coefReg=modRRF$bestTune$coefReg,
+                                        coefImp=modRRF$bestTune$coefImp)
+                  )    
+    predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures][rows, ])
+    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]
+    predictions <- predict (mod, newdata = dfTest)
+    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
+    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+}
+
+ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+    geom_line(size=1) + geom_point(size=5) +
+    xlab("Размер обучающей выборки (m)") + 
+    ylab ("Ошибка (1-Accuracy)") + ggtitle("Regularized Random Forest (RRF)")+
+    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Случайный лес с регуляризацийе (RRF)", 
+                          accuracy = acc, variance="Очень высокий"))
+
+```
+
+График показывает, что модель имеет высокий разброс, то есть переобучена. 
+
+
+
+
+```{r stopCluster, echo=FALSE, warning=FALSE, message = FALSE, cache=FALSE}
+stopCluster(cl) # Explicitly free up cores again.
+
+```
+

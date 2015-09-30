@@ -1,0 +1,49 @@
+---
+title: "SelectModel"
+author: "Alexey Shovkun"
+date: "29 сентября 2015 г."
+output: html_document
+---
+
+
+```{r init, echo=FALSE, message=FALSE}
+#require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+#require(Hmisc) #cut2
+#require(mice)
+require(parallel) #detectCores()
+require(doSNOW)
+require (ggplot2)
+require(gridExtra)
+
+nCores <- detectCores()
+#nCores <-6
+cl<-makeCluster(nCores) # Assign number of cores to use
+registerDoSNOW(cl) # Register the cores.
+
+dfTrainCMNR <- readRDS("../data/trainConstMedianNormRange.rds")
+```
+
+
+
+Выделяем обучающую и тестовую выборки. Проверку качества модели в процессе подбора её параметров будем делать с использованием метода перекрестной проверки (cross validation) на обучающей выборке. Тестовая выборка будет использована **только** для оценки качества результирующей модели.
+
+```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
+set.seed(20150415)
+dfTrain <- dfTrainCMNR
+
+inTrain <- createDataPartition(dfTrain$class, p = .75, list = FALSE, times = 1)
+dfTest <- dfTrain[-inTrain,]
+dfTrain <- dfTrain[inTrain,]
+#str(dfTrain)
+
+```
+
+Размеры выборок: 
+    
+- обучающая: `r nrow(dfTrain)` экземпляров.
+
+- проверочная: отсутствует.
+
+- тестовая: `r nrow(dfTest)` экземпляров.

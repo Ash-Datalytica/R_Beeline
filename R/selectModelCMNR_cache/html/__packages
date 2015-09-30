@@ -1,0 +1,12 @@
+base
+lattice
+ggplot2
+caret
+foreach
+iterators
+snow
+doSNOW
+gridExtra
+rattle
+reshape2
+rpart
