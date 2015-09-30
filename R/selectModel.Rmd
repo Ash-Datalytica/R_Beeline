@@ -7,6 +7,7 @@ output: html_document
 
 
 ```{r init, echo=FALSE, message=FALSE}
+#install.packages("gridExtra")
 #require (data.table)
 require(caret) #dummyVars, featurePlot
 #require(AppliedPredictiveModeling) #transparentTheme
@@ -22,7 +23,7 @@ nCores <- detectCores()
 cl<-makeCluster(nCores) # Assign number of cores to use
 registerDoSNOW(cl) # Register the cores.
 
-dfTrainCMNR <- readRDS("../data/trainConstMedianNormRange.rds")
+dfTrainCMNR <- readRDS("../data/train_ConstMedianRange.rds")
 ```
 
 

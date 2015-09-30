@@ -25,6 +25,7 @@ fileTrain <- "../data/train.csv"
 ##nCores <-6
 #cl<-makeCluster(nCores) # Assign number of cores to use
 #registerDoSNOW(cl) # Register the cores.
+#Sys.getlocale()
 ```
 
 ## Загрузка данных

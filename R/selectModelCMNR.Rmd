@@ -7,6 +7,7 @@ output: html_document
 
 
 ```{r init, echo=FALSE, message=FALSE}
+#install.packages("rpart")
 #require (data.table)
 require(caret) #dummyVars, featurePlot
 #require(AppliedPredictiveModeling) #transparentTheme
@@ -18,6 +19,7 @@ require (ggplot2)
 require(gridExtra)
 require(rattle) #fancyRpartPlot
 require(reshape2) #melt
+require(rpart)
 
 nCores <- detectCores() 
 #nCores <- 6
@@ -28,6 +30,9 @@ dfTrain <- readRDS("../data/train_ConstMedianRange.rds")
 #class(dfTrain[,1]) #factor
 
 dfResults <- NULL
+#Sys.getlocale() #en_US.UTF-8
+Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
+#sessionInfo()
 ```
 
 
