@@ -6,3 +6,7 @@ caret
 survival
 Formula
 Hmisc
+Rcpp
+mice
+gridExtra
+dplyr
