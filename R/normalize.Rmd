@@ -9,7 +9,7 @@ output: html_document
 #require (data.table)
 require(caret) #dummyVars, featurePlot
 #require(AppliedPredictiveModeling) #transparentTheme
-#require(Hmisc) #cut2
+require(Hmisc) #cut2
 #require(mice)
 #require(parallel) #detectCores()
 #require(doSNOW)
@@ -41,11 +41,11 @@ dfTrainCMNR[colNumeric] <- dfNormNumeric
 saveRDS (dfTrainCMNR, "../data/train_ConstMedianRange.rds")
 ```
 
-Посмотрим графически на результаты нормализации на 0.5% данных.
+Посмотрим графически на результаты нормализации на 5% данных.
 
 ```{r normLinearScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
 set.seed(20150926)
-inEDA <- createDataPartition(dfTrainCM$y, p = 0.005, list = FALSE, times = 1)
+inEDA <- createDataPartition(dfTrainCM$y, p = 0.05, list = FALSE, times = 1)
 #ncol(dfNormNumeric) #41 шт
 nChunks <- 7
 parts <- cut2(1:ncol(dfNormNumeric), g=nChunks, onlycuts=TRUE  )
