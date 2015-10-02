@@ -7,6 +7,8 @@ output: html_document
 
 ```{r init, echo=FALSE, message=FALSE}
 #install.packages ("data.table")
+#install.packages ("Hmisc")
+#install.packages ("mice")
 #install.packages ("AppliedPredictiveModelling") # недоступен для R 3.0.2
 #install.packages ("mice")
 #install.packages ("RANN")
@@ -115,9 +117,9 @@ featurePlot (x = dfTrain[whichInteger],
 Возможно, это булевы флаги, проверим.
 ```{r featureIntegers, echo=FALSE, warning=FALSE, message = FALSE}
 table(dfTrain[whichInteger], useNA = "always")
-dfTrain[whichInteger] <- as.data.frame(sapply(dfTrain[whichInteger], as.factor)) 
+dfTrain[whichInteger] <- as.data.frame(sapply(dfTrain[whichInteger], as.logical)) 
 ```
-Действительно, эти переменные являются флагами и всегда имеют значение 0 или 1, не имеют значений NA. оформим их как категорийные переменные.
+Действительно, эти переменные являются флагами и всегда имеют значение 0 или 1, не имеют значений NA. Оформим их как логические (булевы) переменные.
 
 ###Переменные типа numeric (действительные числа)
 Графики строятся Слишком медленно на полной обучающей выборке, поэтому далее для разведочного анализа будем использовать 0.5% данных - 1000 записей.
@@ -236,6 +238,7 @@ dfTrainCM[imputeIDXCategoric] <- dfImpCategoricalConstant
 dfTrainCM[imputeIDXNumeric] <- dfImpNumericMedian
 summary(dfTrainCM)
 #class(dfTrainCM[,1]) #factor
+#class(dfTrainCM[,7]) #logical
 
 saveRDS (dfTrainCM, "../data/train_ConstMedian.rds") #Сохраняем файл без пустых значений
 
