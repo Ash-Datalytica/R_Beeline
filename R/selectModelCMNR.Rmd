@@ -1,5 +1,5 @@
 ---
-title: "SelectModel"
+title: "Выбор модели для набора данных (Константа NA в категорийных, Медиана в числовых, Линейная нормализация)"
 author: "Alexey Shovkun"
 date: "29 сентября 2015 г."
 output: html_document
@@ -23,7 +23,7 @@ require(rpart)
 
 nCores <- detectCores() 
 #nCores <- 6
-cl<-makeCluster(nCores - 1) # оставляем одно ядро на инфраструктуру и параллельные процессы
+cl<-makeCluster(nCores) # оставляем одно ядро на инфраструктуру и параллельные процессы
 registerDoSNOW(cl) # Register the cores.
 
 dfTrain <- readRDS("../data/train_ConstMedianRange.rds")
@@ -31,7 +31,7 @@ dfTrain <- readRDS("../data/train_ConstMedianRange.rds")
 
 dfResults <- NULL
 #Sys.getlocale() #en_US.UTF-8
-Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
+#Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
 #sessionInfo()
 ```
 
@@ -198,7 +198,7 @@ importantFeatures2
 set.seed(12345)
 modDT <- train (y ~ ., method="rpart", 
                 data = dfTrain [importantFeatures1], #73.6
-                #data = dfTrain [allFeatures], #?, не вписались в 13Гб ОЗУ
+                #data = dfTrain [allFeatures], #?, не вписались в 30Гб ОЗУ на r3.xlarge. Долго считалось и почти закончило, но упало
                 #preProcess= "spatialSign", #"pca"
                 # minbucket = minBucket,
                 trControl = trainControl(method = "cv", number=10, repeats=10),
@@ -293,18 +293,18 @@ modRF <- train (y ~ ., method="rf",
                 #количетсво деревьев в лесу.
                 #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
                 ntree= nTree, 
-                tuneGrid = expand.grid(mtry=c(
-                    ceiling(sqrt(nPredictors)/5),
-                    ceiling(sqrt(nPredictors)/4),
-                    ceiling(sqrt(nPredictors)/3),
-                    ceiling(sqrt(nPredictors)/2),
-                    ceiling(sqrt(nPredictors)),
-                    ceiling(sqrt(nPredictors))*2
-                    , ceiling(nPredictors/3)
-                    , ceiling(nPredictors/2)
-                    , ceiling(nPredictors*2/3)
-                    , nPredictors))
-                #tuneLength=40
+#                 tuneGrid = expand.grid(mtry=c(
+#                     ceiling(sqrt(nPredictors)/5),
+#                     ceiling(sqrt(nPredictors)/4),
+#                     ceiling(sqrt(nPredictors)/3),
+#                     ceiling(sqrt(nPredictors)/2),
+#                     ceiling(sqrt(nPredictors)),
+#                     ceiling(sqrt(nPredictors))*2
+#                     , ceiling(nPredictors/3)
+#                     , ceiling(nPredictors/2)
+#                     , ceiling(nPredictors*2/3)
+#                     , nPredictors))
+                tuneLength=4
 )
 modRF
 ggplot(modRF)
