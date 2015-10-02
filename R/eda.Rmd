@@ -17,6 +17,10 @@ require(caret) #dummyVars, featurePlot
 #require(AppliedPredictiveModeling) #transparentTheme
 require(Hmisc) #cut2
 require(mice)
+require (ggplot2)
+require(gridExtra)
+require (dplyr)
+
 #require(parallel) #detectCores()
 #require(doSNOW)
 
@@ -120,6 +124,19 @@ table(dfTrain[whichInteger], useNA = "always")
 dfTrain[whichInteger] <- as.data.frame(sapply(dfTrain[whichInteger], as.logical)) 
 ```
 Действительно, эти переменные являются флагами и всегда имеют значение 0 или 1, не имеют значений NA. Оформим их как логические (булевы) переменные.
+
+Посмотрим по-другому, как они связаны с Возрастной группой.
+
+```{r featureIntegers2, echo=FALSE, fig.width=9}
+dfTmp <- dfTrain %>% group_by(x6,x7,y) %>%
+    summarize(count = n())
+grid.arrange(
+    qplot (x6, y, data = dfTmp) + geom_point(aes(size=count), colour="steelblue")
+    ,qplot (x7, y, data = dfTmp) + geom_point(aes(size=count), colour="salmon")
+    ,ncol=2)
+```
+
+Не понятно.
 
 ###Переменные типа numeric (действительные числа)
 Графики строятся Слишком медленно на полной обучающей выборке, поэтому далее для разведочного анализа будем использовать 0.5% данных - 1000 записей.
