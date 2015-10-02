@@ -29,6 +29,8 @@ registerDoSNOW(cl) # Register the cores.
 dfTrain <- readRDS("../data/train_ConstMedianRange.rds")
 #class(dfTrain[,1]) #factor
 
+#leraningCurvePoints <- ifelse (nCores < 11, 10, nCores-1) # Кол-во точек (моделей) для построения кривой обучения
+leraningCurvePoints <- 5
 dfResults <- NULL
 #Sys.getlocale() #en_US.UTF-8
 #Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
@@ -241,7 +243,7 @@ acc <- modDT$results[(modDT$results$cp == modDT$bestTune$cp), "Accuracy"]
 set.seed(1234)
 #library(caret)
 res <- data.frame()
-res <- foreach  (m = ceiling(seq ((nrow(dfTrain)*0.3), nrow(dfTrain), length.out=10)), 
+res <- foreach  (m = ceiling(seq ((nrow(dfTrain)*0.3), nrow(dfTrain), length.out = leraningCurvePoints)), 
                  .combine=rbind) %dopar% {    
                      #m=84
     rows <- sample (1:nrow(dfTrain),m)    
@@ -283,10 +285,10 @@ dfResults  <- rbind(dfResults,
 #str(dfTrain[importantFeatures])
 nPredictors = length(importantFeatures1) - 1 # из-за y
 #nPredictors = length(allFeatures)#ncol(dfTrain)-1
-nTree <- 500
+nTree <- 50 #500
 set.seed(1234)
 modRF <- train (y ~ ., method="rf", 
-                data = dfTrain [importantFeatures1], #
+                data = dfTrain [importantFeatures1], #74.8
                 #data = dfTrain [importantFeatures2], #
                 #data = dfTrain [allFeatures], #
                 trControl = trainControl(method = "cv", number=10, repeats=10),
@@ -320,25 +322,32 @@ paramRF <- modRF$bestTune$mtry
 
 Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =`r paramRF`.
 ```{r biasAndVarianceRF, echo=FALSE, warning=FALSE, message = FALSE, cache=T}
-set.seed(1234)
-#library(caret)
-res <- data.frame()
-res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out=10), 
-                 .combine=rbind) %dopar% {    
-                     #m=39
-    rows <- sample (1:nrow(dfTrain),m)    
-    mod <- caret::train (class ~ ., method="rf", 
-                  data = dfTrain[importantFeatures][rows, ],
-                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
-                  tuneGrid = data.frame(mtry=paramRF)
-                  )    
-    predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures][rows, ])
-    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]
-    predictions <- predict (mod, newdata = dfTest)
-    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
-    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-}
+system.time({
+    set.seed(1234)
+    #library(caret)
+    res <- data.frame()
+    res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out = leraningCurvePoints), 
+                     .combine=rbind) %dopar% {    # так параллелится на leraningCurvePoints потоков 
+                         #m=39
+#     for (m in seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out = leraningCurvePoints)) { 
+#         # а так параллелится по числу repeats=5
+        rows <- sample (1:nrow(dfTrain),m)    
+        mod <- caret::train (y ~ ., method="rf", 
+                      data = dfTrain[importantFeatures1][rows, ],
+                      trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                      tuneGrid = data.frame(mtry=paramRF)
+                      )    
+        predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures1][rows, ])
+        accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$y[rows], positive="1")$overall[1]
+        predictions <- predict (mod, newdata = dfTest)
+        accTest <- caret::confusionMatrix(predictions,dfTest$y, positive="1")$overall[1]
+        #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+        rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    }
+}) #0.479
+ 
+#Error in e$fun(obj, substitute(ex), parent.frame(), e$data) : worker initialization failed: Error in #confusionMatrix.default(predictions, dfTest$class, positive = "1"): the data and reference factors must have the same number of levels
+#Timing stopped at: 6.993 0.519 2769.56 
 
 ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
     geom_line(size=1) + geom_point(size=5) +
@@ -353,7 +362,7 @@ dfResults  <- rbind(dfResults,
 
 ```
 
-График показывает. что можель имеет высокий разброс, то есть переобучена. Чтобы побороть этот недостаток, можно применть следующее:
+График показывает. что модель имеет высокий разброс, то есть переобучена. Чтобы побороть этот недостаток, можно применть следующее:
 
  - регуляризация (см. далее),
  - метод bagging,
@@ -424,31 +433,32 @@ set.seed(1234)
 #library(caret)
 res <- data.frame()
 res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out=10), 
-                 .combine=rbind) %dopar% {    
-                     #m=39
-    rows <- sample (1:nrow(dfTrain),m)    
-    mod <- caret::train (class ~ ., method="RRF", 
-                  data = dfTrain[importantFeatures][rows, ],
-                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
-                  ntree = nTree,
-                  tuneGrid = data.frame(mtry=modRRF$bestTune$mtry,
-                                        coefReg=modRRF$bestTune$coefReg,
-                                        coefImp=modRRF$bestTune$coefImp)
-                  )    
-    predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures][rows, ])
-    accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]
-    predictions <- predict (mod, newdata = dfTest)
-    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
-    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-}
-
-ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
-    geom_line(size=1) + geom_point(size=5) +
-    xlab("Размер обучающей выборки (m)") + 
-    ylab ("Ошибка (1-Accuracy)") + ggtitle("Regularized Random Forest (RRF)")+
-    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
-    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+                     .combine=rbind) %dopar% {    
+                         #m=39
+        rows <- sample (1:nrow(dfTrain),m)    
+        mod <- caret::train (class ~ ., method="RRF", 
+                      data = dfTrain[importantFeatures][rows, ],
+                      trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                      ntree = nTree,
+                      tuneGrid = data.frame(mtry=modRRF$bestTune$mtry,
+                                            coefReg=modRRF$bestTune$coefReg,
+                                            coefImp=modRRF$bestTune$coefImp)
+                      )    
+        predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures][rows, ])
+        accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$class[rows], positive="1")$overall[1]
+        predictions <- predict (mod, newdata = dfTest)
+        accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
+        #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+        rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    }
+    
+    ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+        geom_line(size=1) + geom_point(size=5) +
+        xlab("Размер обучающей выборки (m)") + 
+        ylab ("Ошибка (1-Accuracy)") + ggtitle("Regularized Random Forest (RRF)")+
+        scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+        scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+)}
 
 dfResults  <- rbind(dfResults,
                     data.frame (model="Случайный лес с регуляризацийе (RRF)", 
@@ -466,3 +476,115 @@ stopCluster(cl) # Explicitly free up cores again.
 
 ```
 
+
+
+### Метод опорных векторов (Support Vector Machine)
+
+Известно, что для задач классификации лучше подходит ядро на снове радиальной базисной функции или полиномиальное ядро, нежели чем линейное ядро. Тесты показывют, что лучще всего работает полиномиальное ядро, затем идут RBF и линейное ядра. Используем полиномиальное ядро.
+
+```{r trainSVM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View(dfTrain[importantFeatures])
+#summary (dfTrain[importantFeatures])
+
+######
+#e1071
+#быстрая, НО 1-поточная библиотека:(
+######
+# require(e1071)
+# set.seed(1234)
+# ## выбираем значение для C
+# objTune <- tune.svm(class ~ ., data = dfTrain [importantFeatures],
+#                kernel="radial", 
+#                type="nu-classification", #C-classification
+#                cost=c(1e-3, 1e-2, 1e-1, 1, 1e1, 1e2),
+#                gamma=c(1e-3, 0.009, 0.01, 1/ncol(dfTrain), 0.1, 1, 9, 10, 11 ),
+#                best.model=TRUE, #обучить и вернуть модель с лучшими параметрами
+#                tunecontrol = tune.control(sampling="cross", cross=10)
+#                )
+# #C-classification, err=0.415 (acc=58.5%)
+# summary(objTune)
+# #objTune
+# plot(objTune)
+# objTune$best.model
+# #####
+           
+set.seed(1234)
+modSVM <- train (y ~ ., method="svmPoly", 
+                 data = dfTrain [importantFeatures1],
+#                 preProcess= "pca", pcaComp=10,
+                 trControl = trainControl(method = "cv", number=10, repeats=10)
+                  ,tuneGrid = expand.grid(
+                        ##для svmLinear
+                        #C=c(0.03,0.1,0.3, 0.5,0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.5, 3,10, 15, 20) 
+                        ##для svmPoly
+                        degree = c(2,3,4,5,6,7,10),
+                        scale = c(1e-2, 1e-1, 0.3),
+                        C=c(1e-2,0.1, 1 ) 
+                        ##svmRadialCost
+                        #C=c(1e-3, 0.01,0.1, 1, 10, 1e2, 2e2, 3e2,350,400,450,500) 
+                        ##svmRadial
+                        #C=c(1e-4, 1e-3, 0.01,0.1, 1, 10),
+                        #sigma=c(1e-4, 1e-3, 1e-2,1e-1,1)
+                     )
+#                 ,tuneLength=3
+) 
+#svmLinear: acc=
+#svmPoly: acc= 
+#svmRadialCost: acc=
+#svmRadial: acc=
+
+modSVM
+ggplot (modSVM)
+
+#modSVM$finalModel
+#summary(modSVM$finalModel)
+#plot(modSVM$finalModel)
+#paramSVM <- modSVM$finalModel@param$C # chosen C parameter
+acc <- modSVM$results[(modSVM$results$degree == modSVM$bestTune$degree) & 
+            (modSVM$results$scale == modSVM$bestTune$scale) &
+            (modSVM$results$C == modSVM$bestTune$C), "Accuracy"]    
+
+```
+
+Проведем анализ сдвига/разброса на основе модели SVM c параметрами:
+
+- degree = `r modSVM$bestTune$degree`
+- scale = `r modSVM$bestTune$scale`
+- С =`r modSVM$bestTune$C`
+
+```{r biasAndVarianceSVM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+set.seed(1234)
+#library(caret)
+#detach("package:RSNNS", unload=TRUE)
+res <- data.frame()
+#for  (m in ceiling(nrow(dfTrain)*0.6):nrow(dfTrain)) {
+res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.5), nrow(dfTrain), length.out=leraningCurvePoints), 
+                 .combine=rbind) %dopar% {    
+                     rows <- sample (1:nrow(dfTrain),m)    
+    mod <- caret::train (y ~ ., method="svmPoly", 
+                  data = dfTrain[importantFeatures1][rows, ],
+                  trControl = caret::trainControl(method = "cv", number=10, repeats=5),
+                  tuneGrid = data.frame(degree=modSVM$bestTune$degree,
+                                        scale=modSVM$bestTune$scale,
+                                        C=modSVM$bestTune$C))
+    accTrain <- caret::confusionMatrix(mod$finalModel@fitted, dfTrain$class[rows], positive="1")$overall[1]
+    predictions <- predict (mod, newdata = dfTest)
+    accTest <- caret::confusionMatrix(predictions,dfTest$class, positive="1")$overall[1]
+    #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+    rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
+}
+
+ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
+    geom_line(size=1) + geom_point(size=5) +
+    xlab("Размер обучающей выборки (m)") + 
+    ylab ("Ошибка (1-Accuracy)") + ggtitle("Метод опорных векторов (SVM)")+
+    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
+    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Support Vector Machine (svmPoly)", accuracy=acc,
+                                variance = "Высокий"))
+
+```
+
+Из графика видим низкий уровень разброса модели, что хорошо, однако, уровень сдвига модели довольно высок и нестабилен, что плохо. 
