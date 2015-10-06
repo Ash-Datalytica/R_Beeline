@@ -601,6 +601,61 @@ dfResults  <- rbind(dfResults,
 
 Модель переобучена.
 
+### Bagged CART
+
+Поскольку Случайный лес переобучен, применим к нему технику bagging. Модель treebag не имеет параметров настройки.
+
+```{r trainTreeBag, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+#View (dfTrain)
+system.time({
+    set.seed(12345)
+    modTreeBag <- train (y ~ ., method="treebag", 
+                    #data = dfTrain [importantFeatures1], #73.49
+                    #data = dfTrain [importantFeatures3], #73.78
+                    #data = dfTrain [importantFeatures4], #73.6
+                    data = dfTrainFull [importantFeatures3], #74.11
+                    trControl = trainControl(method = "cv", number=10, repeats=10)
+#                     ,tuneGrid = expand.grid(
+#                         winnow = FALSE,
+#                         model = c("rules"), #, "tree"
+#                         trials =  c(20, 40, 60, 80, 100)
+#                     )
+    #                ,tuneLength=3
+                    )
+})
+# 11255, IF1, 2 min,  acc=73.49%
+# 11255, IF3, 1 min, acc= 73.78%
+# 11255, IF4, 20 sec, acc= 73.6%
+# 37502, IF3, 4 min, acc= 74.11%
+
+modTreeBag
+#modTreeBag$finalModel
+#summary(modTreeBag$finalModel)
+#varImp (modTreeBag)
+#ggplot(modTreeBag)
+#plot(modTreeBag$finalModel)
+
+
+acc <- modTreeBag$results[1, "Accuracy"]    
+acc
+
+```
+
+```{r biasAndVarianceTreeBag, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+# на сокращенных выборках
+myPlotLearningCurve (dfTrainFull, dfTestFull, method = "treebag", targetVariable = "y", 
+                     featuresList = importantFeatures3,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = NULL,
+                     title = "Bagged CART (treebag)",
+                     cvRepeats = 3)
+# при сокращенном обучающем наборе - средний (~15% vs 25%)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Bagged CART (treebag)", accuracy=acc,
+                                variance="Очень высокий"))
+```   
+
 ### Stochastic Gradient Boosting, ~AdaBoost (gbm)
 
 An implementation of extensions to Freund and Schapire's AdaBoost algorithm and Friedman's gradient boosting machine. Includes regression methods for least squares, absolute loss, t-distribution loss, quantile regression, logistic, multinomial logistic, Poisson, Cox proportional hazards partial likelihood, AdaBoost exponential loss, Huberized hinge loss, and Learning to Rank measures (LambdaMart).
@@ -615,27 +670,27 @@ http://en.wikipedia.org/wiki/Gradient_boosting
 ```{r trainGBM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=F}
 #View (dfTrain)
 #http://en.wikipedia.org/wiki/Gradient_boosting
-minObsInNode <- 11
+#minObsInNode <- 11
 system.time({
     set.seed(20150527)
-    modGBM <- train (class ~ ., method="gbm", 
-                    data = dfTrain [importantFeatures], #73.8%
-                    #data = dfTrain [importantFeatures2], #71.4%
-                    #data = dfTrain [allFeatures], #70.5%
+    modGBM <- train (y ~ ., method="gbm", 
+                    data = dfTrain [importantFeatures3], #
+                    #data = dfTrain [importantFeatures4], #
+                    #data = dfTrain [allFeatures], #
                     #preProcess="pca",
                     trControl = trainControl(method = "cv", number=10, repeats=10)                        
-                    ,n.minobsinnode = minObsInNode # minimum total weight needed in each node
+                    #,n.minobsinnode = minObsInNode # minimum total weight needed in each node
                     ,verbose=FALSE # не выводить дели рассчета
                     ,tuneGrid = expand.grid(
                         #the total number of trees to fit. This is equivalent to the number 
                         #of iterations and the number of basis functions in the additive expansion
-                        n.trees = c(100, 500, 1e3, 1e4), #1e4 #кол-во деревьев
+                        n.trees = c(100, 500), #1e4 #кол-во деревьев
                         #the maximum depth of variable interactions. 1 implies an additive model, 
                         #2 implies a model with up to 2-way interactions, etc.
-                        interaction.depth = c(2,3,4,5,6,7,8), 
+                        interaction.depth = c(2,3,4), 
                         #a shrinkage parameter applied to each tree in the expansion. 
                         #Also known as the learning rate or step-size reduction
-                        shrinkage= c(1e-3, 0.01, 0.1, 0.66) #learning rate #1, 1.1
+                        shrinkage= c(1e-3, 0.01, 0.1) #learning rate #1, 1.1
                           )
 #                      ,tuneLength=20
 )})
