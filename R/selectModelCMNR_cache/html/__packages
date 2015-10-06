@@ -10,3 +10,7 @@ gridExtra
 rattle
 reshape2
 rpart
+gplots
+ROCR
+randomForest
+nnet

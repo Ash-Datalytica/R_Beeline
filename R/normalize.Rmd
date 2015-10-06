@@ -15,6 +15,7 @@ require(Hmisc) #cut2
 #require(doSNOW)
 
 dfTrainCM <- readRDS("../data/train_ConstMedian.rds")
+dfTestCM <- readRDS("../data/test_ConstMedian.rds")
 ```
 
 Необходимо нормализовать значения параметров типа numeric. Рассмотрим 2 варианта нормализации:
@@ -39,6 +40,11 @@ dfTrainCMNR[colNumeric] <- dfNormNumeric
 #class(dfTrainCMNR[,1])
 
 saveRDS (dfTrainCMNR, "../data/train_ConstMedianRange.rds")
+
+## аналогично обрабатываем тестовые данные
+dfTestCMNR <- dfTestCM
+dfTestCMNR[colNumeric] <- predict(preNormLinear, dfTestCM[colNumeric])
+saveRDS (dfTestCMNR, "../data/test_ConstMedianRange.rds")
 ```
 
 Посмотрим графически на результаты нормализации на 5% данных.
@@ -72,3 +78,4 @@ TODO:
   - Линейная нормализация в диапазон [0,1] 
   - Линейная нормализация в диапазон [-1,1] 
   - Нелинейная нормализация в диапазон [-1,1] (метод YeoJohnson): x8
+  

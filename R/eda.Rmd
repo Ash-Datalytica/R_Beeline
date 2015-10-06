@@ -25,6 +25,7 @@ require (dplyr)
 #require(doSNOW)
 
 fileTrain <- "../data/train.csv" 
+fileTest <- "../data/test.csv"
 #transparentTheme(trans = .4)
 
 #nCores <- detectCores()
@@ -70,6 +71,7 @@ dfTrain[whichCharacter] <- as.data.frame(sapply(dfTrain[whichCharacter], as.fact
 #class(dfTrain[,1])
 #levels(dfTrain[,1])
 #table(dfTrain[,1])
+
 
 uniqueCount <- sapply(dfTrain, function(x){length(unique(x))})
 uniqueCount[whichCharacter]
@@ -262,9 +264,42 @@ saveRDS (dfTrainCM, "../data/train_ConstMedian.rds") #Сохраняем фай�
 
 ```
 
+Аналогичным образом обрабатываем пустые значения в тестовом наборе данных.
+
+```{r processTestData, echo=FALSE}
+# тестовые данные
+dfFinalTest <- fread(fileTest, sep=",", header = T, stringsAsFactors=T
+               , na.strings=c("NA","") # считываем пустые строки как NA
+                 #, nrows=1000 
+               ,data.table=F # считать в data frame
+               )
+# вместо индексов надо использовать имена перменных
+imputeNumeric <- colnames(dfTrain)[imputeIDXNumeric]
+imputeCategoric <- colnames(dfTrain)[imputeIDXCategoric]
+integerFeatures <- colnames(dfTrain)[whichInteger]
+
+dfTestImpNumericMedian <- predict(preNumericMedian, dfFinalTest[imputeNumeric])
+dfTestImpCategoricalConstant <- as.data.frame(sapply(dfFinalTest[,imputeCategoric], as.character), stringsAsFactors = FALSE)
+dfTestImpCategoricalConstant <- replaceNA(dfTestImpCategoricalConstant, "Не определено")
+dfTestImpCategoricalConstant <- as.data.frame(sapply(dfTestImpCategoricalConstant, as.factor)) 
+#View(dfImpCategoricalConstant)
+#summary(dfImpCategoricalConstant)
+
+# название: первый символ показывает категорийные переменные "C" - замена на новую константу
+# второй символ показывает числовые прееменные "M" - замена пустых значений на медиану
+dfTestCM <- dfFinalTest
+dfTestCM[integerFeatures] <- as.data.frame(sapply(dfTestCM[integerFeatures], as.logical)) 
+dfTestCM[imputeCategoric] <- dfTestImpCategoricalConstant
+dfTestCM[imputeNumeric] <- dfTestImpNumericMedian
+summary(dfTestCM)
+
+saveRDS (dfTestCM, "../data/test_ConstMedian.rds") #Сохраняем файл без пустых значений
+
+```
+
 TODO: 
 
-  - аналогичная обработка набора тестовых данных test.
+  -  (+) аналогичная обработка набора тестовых данных test.
   - найти более сильный способ замены пустых значений в категорийных переменных.
     - Перегруппировать категорийные переменные в квантильные группы.
   - найти способ применить метод KNN к числовым переменным.
