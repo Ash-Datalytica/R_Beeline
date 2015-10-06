@@ -329,7 +329,7 @@ ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id
 
 dfResults  <- rbind(dfResults,
                     data.frame (model="Decision Tree (rpart)", accuracy=acc,
-                                variance="?Низкий"))
+                                variance="Средний"))
 ```
 
 Этот график показывает низкий уровень разброса модели, поскольку графики сходятся. Графики еще не сошлись, что означает, что увеличение размера обучающей выборки может повысить точность модели. Предельной точностью данной модели будет **~74%**, которую мы видим на графике для тестовой выборки при максимальных значениях её размера. 
@@ -344,24 +344,24 @@ dfResults  <- rbind(dfResults,
 nPredictors = length(importantFeatures1) - 1 # из-за y
 #nPredictors = length(allFeatures)#ncol(dfTrain)-1
 
-nTree <- 50 #500
-# = 50 - acc= 74.8%
-# = 100 - 8 min,  acc= 75.1%
+nTree <- 100 #500
+# = 50 -  11255, IF1,      , acc= 74.8%
+# = 100 - 37502, IF1, 8 min,  acc= 75.1%
 # = 500 - 25 min - ошибка
 
 system.time({
     set.seed(1234)
     modRF <- train (y ~ ., method="rf", 
-                    data = dfTrain [importantFeatures1], #74.8
+                    data = dfTrainFull [importantFeatures1], #74.8
                     #data = dfTrain [importantFeatures2], #
-                    #data = dfTrain [allFeatures], #
+                    #data = dfTrain [importantFeatures1], # 74.21
                     trControl = trainControl(method = "cv", number=10, repeats=10),
                     #количетсво деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
                     ntree= nTree, 
                     tuneGrid = expand.grid(mtry=c(
-                        ceiling(sqrt(nPredictors)/5),
-                        ceiling(sqrt(nPredictors)/4),
+                        #ceiling(sqrt(nPredictors)/5),
+                        #ceiling(sqrt(nPredictors)/4),
                         ceiling(sqrt(nPredictors)/3),
                         ceiling(sqrt(nPredictors)/2),
                         ceiling(sqrt(nPredictors)),
@@ -387,41 +387,21 @@ paramRF <- modRF$bestTune$mtry
 
 Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =`r paramRF`.
 ```{r biasAndVarianceRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
-system.time({
-    set.seed(12345)
-    #library(caret)
-    res <- data.frame()
-    res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out = learningCurvePoints), 
-                     .combine=rbind) %dopar% {    # так параллелится на learningCurvePoints потоков 
-                         #m=39
-#     for (m in seq (ceiling(nrow(dfTrain)*0.6), nrow(dfTrain), length.out = learningCurvePoints)) { 
-#         # а так параллелится по числу repeats=5
-        rows <- sample (1:nrow(dfTrain),m)    
-        mod <- caret::train (y ~ ., method="rf", 
-                      data = dfTrain[importantFeatures1][rows, ],
-                      trControl = caret::trainControl(method = "cv", number=10, repeats=3),
-                      ntree = nTree,
-                      tuneGrid = data.frame(mtry=paramRF)
-                      )    
-        predictionsTrain <- predict (mod, newdata = dfTrain[importantFeatures1][rows, ])
-        accTrain <- caret::confusionMatrix(predictionsTrain, dfTrain$y[rows], positive="1")$overall[1]
-        predictions <- predict (mod, newdata = dfTest)
-        accTest <- caret::confusionMatrix(predictions,dfTest$y, positive="1")$overall[1]
-        #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-        rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-    }
-}) #69 min на полной (37к)
- 
-ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
-    geom_line(size=1) + geom_point(size=5) +
-    xlab("Размер обучающей выборки (m)") + 
-    ylab ("Ошибка (1-Accuracy)") + ggtitle("Random Forest")+
-    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
-    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+# на сокращенных данных
+myPlotLearningCurve (dfTrain, dfTest, method = "rf", targetVariable = "y", 
+                     featuresList = importantFeatures1,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                                            mtry=modRF$bestTune$mtry
+                                            ),
+                     title = "Random Forest",
+                     cvRepeats = 3,
+                     ntree = nTree)
+#69 min на полной (37к)
 
 dfResults  <- rbind(dfResults,
                     data.frame (model="Random Forest", 
-                          accuracy = acc, variance="?Очень высокий"))
+                          accuracy = acc, variance="Очень высокий"))
 
 ```
 
@@ -435,6 +415,51 @@ dfResults  <- rbind(dfResults,
  - метод bagging,
  - больше данных,
  - сокращение (отбор) параметров.
+
+Поскольку данная модель показывает адекватные результаты, выделим параметры абонента, которые для нее оказались важными. Будем использовать этот набор параметров в случаях, когда другие модели будут показывать высокий разброс.
+
+```{r importantFeatures3, echo=FALSE, warning=FALSE, message = FALSE}
+require(dplyr)
+
+dfTmp <- varImp(modRF)$importance
+dfTmp$variable <- rownames(dfTmp) 
+dfImp <- dfTmp %>% arrange(desc(Overall)) %>% 
+    filter (Overall >= 1) %>% 
+    select (variable, Overall)
+dfImp$class <- apply (dfTrain[dfImp$variable],2, class) # типы данных параметров
+dfImp
+
+importantFeatures3 <- c(dfImp$variable, "y") #41 шт
+
+dfImp2 <- dfTmp %>% arrange(desc(Overall)) %>% 
+    top_n(10, Overall) %>%
+    select (variable, Overall)
+dfImp2$class <- apply (dfTrain[dfImp2$variable],2, class) # типы данных параметров
+#dfImp2
+importantFeatures4 <- c(dfImp2$variable, "y") # 10 наиболее значимых.
+```
+
+Видим, что самыми значимыми (значимость >1%) оказались только числовые параметры. Посмотрим на их значения.
+
+```{r importantFeatures3Overview, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+require (Hmisc)
+summary(dfTrainFull[importantFeatures3])
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrainFull$y, p = 0.05, list = FALSE, times = 1)
+
+nChunks <- length(importantFeatures3) %/% 6 # 6 штук
+parts <- cut2(1:length(importantFeatures3), g=nChunks, onlycuts=TRUE  )
+parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
+for (i in 1:nChunks)  {
+#p <- foreach (i = i:nChunks, .combine=list) %dopar% {
+    fp <- featurePlot (x = dfTrainFull[inEDA,][parts[i]:(parts[i+1]-1)],
+             y = dfTrainFull$y,
+             plot="pairs", auto.key=list(columns=2))
+    plot(fp)
+}
+
+
+```
 
 ### Случайный лес c регуляризацией (RRF)
 
@@ -508,7 +533,7 @@ dfResults  <- rbind(dfResults, data.frame (
 
 Предыдущий метод использовал набор одноуровневых деревьев для коллективного голосования, сейчас мы будем использовать сборку из многоуровневых деревьев. 
 
-```{r trainC50, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=T}
+```{r trainC50, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
 #View (dfTrain)
 # trials	- an integer specifying the number of boosting iterations. 
 #  A value of one indicates that a single model is used.
@@ -516,8 +541,8 @@ system.time({
     set.seed(12345)
     modC50 <- train (y ~ ., method="C5.0", 
                     #data = dfTrain [importantFeatures], #
-                    data = dfTrain [importantFeatures1], #
-                    #data = dfTrain [allFeatures], #
+                    #data = dfTrain [importantFeatures1], #73.67
+                    data = dfTrain [importantFeatures3], #74.0
                     #preProcess= "spatialSign", #"pca"
                     trControl = trainControl(method = "cv", number=10, repeats=10)
                     ,tuneGrid = expand.grid(
@@ -530,6 +555,7 @@ system.time({
 })
 # 11255, IF1, trials = 20, model=rules, acc=73.7%
 # 11255, IF1, 6min, trials = 60 , model=rules, acc=73.67%
+# 11255, IF3, 7 min, trials =  60, model=rules, acc= 74.00%
 
 #modC50
 modC50$finalModel
@@ -557,7 +583,7 @@ acc
 ```{r biasAndVarianceС50, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=T}
 # на сокращенных выборках
 myPlotLearningCurve (dfTrain, dfTest, method = "C5.0", targetVariable = "y", 
-                     featuresList = importantFeatures1,
+                     featuresList = importantFeatures3,
                      learningCurvePoints = learningCurvePoints,
                      tuneGrid = data.frame(
                                            model = modC50$bestTune$model,
@@ -756,10 +782,10 @@ system.time({
     set.seed(1234)
     modSVM <- train (y ~ ., method="svmPoly", 
                      #data = dfTrain [inModelSelect, importantFeatures1], # acc=0.49, In .local(x, ...) : Variable(s) `' constant. Cannot scale data.
-                     #data = dfTrain [inModelSelect, importantFeatures2],
-                     data = dfTrainFull [importantFeatures2],                     
+                     data = dfTrain [importantFeatures4],
+                     #data = dfTrainFull [importantFeatures2],                     
     #                 preProcess= "pca", pcaComp=10,
-                     trControl = trainControl(method = "cv", number=10, repeats=3) # 5 повторов, т.к. это только выбор параметров
+                     trControl = trainControl(method = "cv", number=10, repeats=5) # 5 повторов, т.к. это только выбор параметров
                        ,tuneGrid = expand.grid(
                              ##для svmLinear
                              # C=c(1e-3, 1e-2,0.1, 1, 10) 
@@ -781,6 +807,7 @@ system.time({
 #         3700, 7 min, acc = 
 #         11255, IF2, cv=10 repeats, 45 min, acc = .55
 #         37502, IF2, cv=3 repeats,  min, acc = 
+#         37502, IF4, cv=5 repeats, >42 min, acc = 
 #svmRadialCost: acc=
 #svmRadial: 5000, ,acc= 74.2% ()
 
@@ -881,19 +908,106 @@ dfResults  <- rbind(dfResults,
 ?Из графика видим низкий уровень разброса модели, что хорошо, однако, уровень сдвига модели довольно высок и нестабилен, что плохо. 
 
 
+### Multi Layer Perceptron (RSNNS)
+
+```{r trainRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain)
+
+maxIter <- 1500
+system.time({
+   set.seed(20151006)
+    modRSNNS <- train (y ~ ., method="mlp", #mlpWeightDecay
+                    data = dfTrain [importantFeatures3], #
+                    #data = dfTrain [importantFeatures1], # 51.75
+                    trControl = trainControl(method = "cv", number=10, repeats=10),
+                    maxit= maxIter, #nrow(dfTrain)*2,                    
+                    learnFunc= "BackpropMomentum", 
+                    #1) learning param (0.1:2), 2) momentum term (0:1), 
+                    #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
+                    #4) the maximum difference
+                    #see SNNS User Manual, pp. 67
+                    learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+                    hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
+                    tuneGrid = expand.grid(
+                          size = c(6, 7, 8)
+                          )
+#                      tuneLength=4
+)}) 
+# 11255, IF1, maxIter=200, 6 min, erorrs, size=5, acc=49.76%
+# 11255, IF1, maxIter=500, 7 min, erorrs, size=7, acc=50.52%%
+# 11255, IF1, maxIter=1500, 8 min, erorrs, size=6, acc= 51.75%
+# 11255, IF3, maxIter=1500,  min, erorrs, size= , acc= %55.42%
+
+modRSNNS
+#modRSNNS$finalModel
+#summary(modRSNNS$finalModel)
+ggplot(modRSNNS)
+#par(mfrow=c(1,1))
+plotIterativeError(modRSNNS$finalModel)
+#modRSNNS$finalModel$IterativeFitError
+varImp(modRSNNS)
+
+# acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size) & 
+#             (modRSNNS$results$decay == modRSNNS$bestTune$decay), "Accuracy"]    
+acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size), "Accuracy"]    
+
+```
+
+Последний график, показывает, что при увеличении количества итераций ошибка стремится к 0, т.е. модель склонна к переобучению. Ограничим число итераций по правилю "клюшки" 200 итерациями.
+
+Проведем анализ полноты обучения для полученной нейросети RSNNS с параметрами:
+
+- maxit = `r maxIter`.
+- learnFunc = BackpropMomentum.
+- learnFuncParams = c(0.1, 0.03, 0.1, 0.001).
+- hiddenActFunc = Act_TanH.
+- size = `r modRSNNS$bestTune$size`.
+
+```{r biasAndVarianceRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+# короткие
+myPlotLearningCurve (dfTrain, dfTest, method = "mlp", targetVariable = "y", 
+                     featuresList = importantFeatures1,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                        size = modRSNNS$bestTune$size
+                        ),
+                     title = "Нейросеть RSNNS (mlp)",
+                     cvRepeats = 3,
+                     maxit = maxIter,                     
+                     learnFunc= "BackpropMomentum",
+                     #learning param 0.1:2, momentum term, flat spot elimination value, the maximum difference
+                     #see SNNS User Manual, pp. 67
+                     learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+                     hiddenActFunc = "Act_TanH" 
+                     )
+
+detach("package:RSNNS", unload=TRUE)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Multi Layer Perceptron (RSNNS)", 
+                          accuracy=acc, variance = "?Высокий"))
+
+```
+
+Модель показывает неплохую точность на тестовой выборке, однако разброс довольно велик.
+
+
+
 ### Нейросеть с 1 уровнем (nnet)
 
-?Можно применить нейросеть с предварительным отбором параметров на основе метода главных компонент (pcaNNet), но мы уже отобрали наиборлее информативные параметры, поэтому используем обычную одноуровневую нейросеть (nnet).
+Можно применить нейросеть с предварительным отбором параметров на основе метода главных компонент (pcaNNet), но мы уже отобрали наиборлее информативные параметры, поэтому используем обычную одноуровневую нейросеть (nnet).
 
 ```{r trainNNET, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
 #View (dfTrain [, -c(1, which(nzv$nzv))])
 #pcaNNet=Neural Networks with Feature Extraction
-maxIter <- 500
+
+maxIter <- 1000
 system.time({
     set.seed(20151004)
     modNNET <- train (y ~ ., method="nnet", #nnet, pcaNNet
-                     #data = dfTrain [importantFeatures], # 
-                     data = dfTrainFull [importantFeatures1], # 
+                     #data = dfTrainFull [importantFeatures1], # 68.7
+                     #data = dfTrainFull [importantFeatures3], # 72,55
+                     data = dfTrainFull [importantFeatures4], # 72,89
                      #data = dfTrain [allFeatures], #pcaNNet, 
                      maxit = maxIter, #Макс
                      trace=FALSE, # FALSE-для более быстрого рассчета
@@ -912,6 +1026,8 @@ system.time({
 #maxIter=500, IF1, train=11255, acc= 61.0% , 7min (size=5, decay=0.001)
 #maxIter=500, IF1, train=37502, acc= 67.3% , 25min (size=8, decay=0.001)
 #maxIter=500, IF1, train=37502, acc= 68.7% , 25min (size=6, decay=0.0001)
+#maxIter=1000, IF3, train=37502, acc= 72.55% , 30 min (size= 9, decay=0.0001)
+#maxIter=1000, IF4, train=37502, acc= 72.89% , 15 min (size= 9, decay=0.0001)
 
 modNNET
 ggplot(modNNET)
@@ -957,32 +1073,6 @@ dfResults  <- rbind(dfResults,
 dfResults
 ```
 
-Для моделей, которые показали хорошие резулььтаты (низкий разброс), проанализируем ROC кривые.
-
-ВОПРОС: как это сделать в случае многоклассовой модели?
-
-```{r ROC, echo=FALSE, warning=FALSE, message = FALSE, eval=FALSE}
-#Reciever Operation Curve 
-#p1 <- myPlotROC (modGLMBoost$finalModel$fitted(), dfTrain$class, title="Логистическая регрессия (glmboost)")
-predicted <- predict (modDT, newdata = dfTrain)
-p2 <- myPlotROC (as.numeric(predicted)-1, dfTrain$y, title="Дерево решений (rpart)")
-predicted <- predict (modLB, newdata = dfTrain)
-p3 <- myPlotROC (as.numeric(predicted)-1, dfTrain$class, title="LogitBoost")
-p4 <- myPlotROC (as.numeric(modSVM$finalModel@fitted)-1, dfTrain$class, title="Метод опорных векторов")
-p5 <- myPlotROC (modNNET$finalModel$fitted.values, dfTrain$class, title="Нейросеть (nnet)")
-p6 <- myPlotROC (modRSNNS$finalModel$fitted.values[,2], dfTrain$class, title="Нейросеть (RSNNS)")
-grid.arrange(p1,p2,p3,p4,p5, p6, ncol=2)
-
-# predicted <- predict (modC50, newdata = dfTrain)
-# myPlotROC (as.numeric(predicted)-1, dfTrain$class, title="Продвинутое дерево решений C5.0")
-
-#predicted <- predict(modGBM, newdata = dfTrain)
-#myPlotROC(as.numeric(predicted)-1, dfTrain$class, title="Stohastic Gradient Boosting (gbm)")
-```
-
-???Модель LogitBoost дает самый высокий, практически идеальный, показатель AUC. Однако, этот показатель рассчитывается на обучающей выборке, а модель имеет довольно высокий разброс, т.е. вероятно переобучена, поэтому мы не можем считать ее лучшей моделью. Аналогично, модель RSNNS показывает хорошее значение AUC, при признаках переобучения.
-
-???В качестве финальной лучшей модели выберем **Нейросеть nnet**, которая показывает низкий уровень разброса при очень хорошем значении AUC.
 
 
 ### Проверка лучшей модели на тестовой выборке 
