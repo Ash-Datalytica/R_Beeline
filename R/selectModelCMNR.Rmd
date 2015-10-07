@@ -22,6 +22,7 @@ require(rattle) #fancyRpartPlot
 require(reshape2) #melt
 require(rpart)
 require(ROCR) #myPlotROC()
+require (plyr); require(dplyr) #чтобы загружались именно в таком порядке
 
 eval(parse('common.R',encoding = "UTF-8"))
 
@@ -30,8 +31,6 @@ nCores <- detectCores()
 cl<-makeCluster(nCores) # оставляем одно ядро на инфраструктуру и параллельные процессы
 registerDoSNOW(cl) # Register the cores.
 
-dfTrainFull <- readRDS("../data/train_ConstMedianRange.rds")
-#class(dfTrainFull[,1]) #factor
 
 #learningCurvePoints <- ifelse (nCores < 11, 10, nCores-1) # Кол-во точек (моделей) для построения кривой обучения
 learningCurvePoints <- 8
@@ -49,6 +48,9 @@ trellis.par.set(caretTheme())
 
 ```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
 set.seed(20150415)
+dfTrainFull <- readRDS("../data/train_ConstMedianRange.rds")
+#class(dfTrainFull[,1]) #factor
+
 
 ## сокращаем объем исследуемых данных.
 inSelection <- createDataPartition(dfTrainFull$y, p = .3, list = FALSE, times = 1)
@@ -362,17 +364,19 @@ system.time({
                     tuneGrid = expand.grid(mtry=c(
                         #ceiling(sqrt(nPredictors)/5),
                         #ceiling(sqrt(nPredictors)/4),
-                        ceiling(sqrt(nPredictors)/3),
-                        ceiling(sqrt(nPredictors)/2),
-                        ceiling(sqrt(nPredictors)),
-                        ceiling(sqrt(nPredictors))*2
-                        , ceiling(nPredictors/3)
-                        , ceiling(nPredictors/2)
-                        , ceiling(nPredictors*2/3)
-                        , nPredictors))
+#                         ceiling(sqrt(nPredictors)/3),
+#                         ceiling(sqrt(nPredictors)/2),
+#                         ceiling(sqrt(nPredictors)),
+#                         ceiling(sqrt(nPredictors))*2
+#                         , ceiling(nPredictors/3)
+#                         , ceiling(nPredictors/2)
+#                         , ceiling(nPredictors*2/3)
+#                         , nPredictors
+                        15,17,19, 21, 23, 39, 41, 43, 81
+                        ))
     #                tuneLength=4
     )
-})
+}) # 4 min
 modRF
 ggplot(modRF) # пказывает, что достаточно 50 деревьев
 #modRF$finalModel
@@ -463,8 +467,90 @@ for (i in 1:nChunks)  {
 
 ### Случайный лес c регуляризацией (RRF)
 
-Не будем пробовать, т.к. обычный случайный лес не дал существенно лучших результатов по сравнению с деревом решений.
+Обычный случайный лес показал высокий разброс при хорошей точности тренировочной модели, т.е. переобученность. Попробуем побороться с ней за счет регуляризации.
 
+```{r trainRRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain[importantFeatures])
+#str(dfTrain[importantFeatures])
+nPredictors = length(importantFeatures3) - 1 # из-за y
+#nPredictors = length(allFeatures)#ncol(dfTrain)-1
+
+#nTree берем как у RF
+#nTree <- 50 #500
+# = 50 -  11255, IF1,      , acc= 74.8%
+# = 100 - 37502, IF1, 8 min,  acc= 75.1%
+# = 500 - 25 min - ошибка
+system.time({
+    set.seed(1234)
+    modRRF <- train (y ~ ., method="RRF", 
+                    #data = dfTrain [importantFeatures1], #
+                    #data = dfTrain [importantFeatures3], # 74.02
+                    data = dfTrainFull [importantFeatures3], # 74.02
+                    trControl = trainControl(method = "cv", number=10, repeats=10),
+                    #количетсво деревьев в лесу.
+                    #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
+                    ntree= nTree, 
+                    tuneGrid = expand.grid(mtry=c(
+                        #ceiling(sqrt(nPredictors)/5),
+                        #ceiling(sqrt(nPredictors)/4),
+                        #ceiling(sqrt(nPredictors)/3),
+                        9, 11, 13, 15, 17, 19, 21, 41
+#                         ceiling(sqrt(nPredictors)/2),
+#                         ceiling(sqrt(nPredictors)),
+#                         ceiling(sqrt(nPredictors))*2
+#                         , ceiling(nPredictors/3)
+#                         , ceiling(nPredictors/2)
+#                         , ceiling(nPredictors*2/3)
+#                         , nPredictors
+                        ),
+                        coefImp=0,
+                        coefReg=c(0.8)
+                        )
+#                    tuneLength=3
+    )
+})
+# 11255, IF1, nTree=50, 11 min, acc 73.78% (mtry=2, coefReg=1, coefImp=0)
+# 11255, IF1, nTree=50, 2 min, acc 73.92% (mtry=41, coefReg=0.8, coefImp=0)
+# 11255, IF3, nTree=50, 2 min ,acc 74.02% (mtry=21, coefReg=0.8, coefImp=0)
+# 11255, IF3, nTree=50, 2 min ,acc 74.04% (mtry=19, coefReg=0.8, coefImp=0)
+# 37502, IF3, nTree=50, 8 min ,acc= 74.44 (mtry=15, coefReg=0.8, coefImp=0)
+# 37502, IF3, nTree=20, 3 min ,acc= 74.11% (mtry=21, coefReg=0.8, coefImp=0)
+# 37502, IF3, nTree=10, 2 min ,acc= 73.19% (mtry=15, coefReg=0.8, coefImp=0)
+
+modRRF
+ggplot(modRRF) # показывает, что достаточно X деревьев
+#modRF$finalModel
+plot(modRRF$finalModel)
+#varImp(modRRF)
+#varImpPlot(modRRF$finalModel)
+acc <- modRRF$results$Accuracy[as.numeric(rownames(modRRF$bestTune)[1])]
+acc
+
+paramRRF <- modRRF$bestTune$mtry
+```
+
+Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =`r paramRF`.
+```{r biasAndVarianceRRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+# на сокращенных данных
+myPlotLearningCurve (dfTrain, dfTest, method = "RRF", targetVariable = "y", 
+                     featuresList = importantFeatures3,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                                            mtry=modRRF$bestTune$mtry,
+                                            coefImp=modRRF$bestTune$coefImp,
+                                            coefReg=modRRF$bestTune$coefReg
+                                            ),
+                     title = "Random Forest with Regularization",
+                     cvRepeats = 3,
+                     ntree = nTree)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Random Forest w. Regularization", 
+                          accuracy = acc, variance="Очень высокий"))
+
+```
+
+Эффекта никакого нет по сравнению с обычным случайным лесом.
 
 ### LogitBoost Classification Algorithm (Boosted Logistic Regression)
 
@@ -642,7 +728,7 @@ acc
 ```
 
 ```{r biasAndVarianceTreeBag, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
-# на сокращенных выборках
+# на полных выборках
 myPlotLearningCurve (dfTrainFull, dfTestFull, method = "treebag", targetVariable = "y", 
                      featuresList = importantFeatures3,
                      learningCurvePoints = learningCurvePoints,
@@ -656,6 +742,48 @@ dfResults  <- rbind(dfResults,
                                 variance="Очень высокий"))
 ```   
 
+### Bagged AdaBoost (AdaBag)
+
+Попробуем еще один вариант баггинга.
+
+```{r trainAdaBag, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+#View (dfTrain)
+system.time({
+    set.seed(20150527)
+    modGBM <- train (y ~ ., method="AdaBag", 
+                    data = dfTrainFull [importantFeatures3], #
+                    #data = dfTrain [importantFeatures4], #
+                    #data = dfTrain [allFeatures], #
+                    #preProcess="pca",
+                    trControl = trainControl(method = "cv", number=10, repeats=10)                        
+                    #,n.minobsinnode = minObsInNode # minimum total weight needed in each node
+                    ,verbose=FALSE # не выводить дели рассчета
+#                     ,tuneGrid = expand.grid(
+#                           )
+                      ,tuneLength=3
+)})
+# Error in train.default(x, y, weights = w, ...) : 
+#  final tuning parameters could not be determined
+ 
+# 11255, IF3,  min, acc= 
+# 37502, IF3, 
+
+
+modAdaBag
+modAdaBag$finalModel
+#summary(modGBM$finalModel)
+#gbm.perf (modGBM$finalModel)
+#pretty.gbm.tree(modGBM$finalModel)
+#varImp(modGBM)
+ggplot(modAdaBag)
+
+acc <- modGBM$results[(modGBM$results$n.trees == modGBM$bestTune$n.trees) & 
+            (modGBM$results$interaction.depth == modGBM$bestTune$interaction.depth) &
+            (modGBM$results$shrinkage == modGBM$bestTune$shrinkage), "Accuracy"]    
+```
+
+Не получилось запуцстить эту модели из-за ошибки.
+
 ### Stochastic Gradient Boosting, ~AdaBoost (gbm)
 
 An implementation of extensions to Freund and Schapire's AdaBoost algorithm and Friedman's gradient boosting machine. Includes regression methods for least squares, absolute loss, t-distribution loss, quantile regression, logistic, multinomial logistic, Poisson, Cox proportional hazards partial likelihood, AdaBoost exponential loss, Huberized hinge loss, and Learning to Rank measures (LambdaMart).
@@ -667,14 +795,14 @@ http://en.wikipedia.org/wiki/Gradient_boosting
  - **n.trees** - количество деревьев, которые будут построены.
  - **interaction.depth** - the maximum depth of variable interactions. 1 implies an additive model, 2 implies a model with up to 2-way interactions, etc.
 
-```{r trainGBM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=F}
+```{r trainGBM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
 #View (dfTrain)
 #http://en.wikipedia.org/wiki/Gradient_boosting
 #minObsInNode <- 11
 system.time({
     set.seed(20150527)
     modGBM <- train (y ~ ., method="gbm", 
-                    data = dfTrain [importantFeatures3], #
+                    data = dfTrain [importantFeatures3], #74.79
                     #data = dfTrain [importantFeatures4], #
                     #data = dfTrain [allFeatures], #
                     #preProcess="pca",
@@ -684,24 +812,27 @@ system.time({
                     ,tuneGrid = expand.grid(
                         #the total number of trees to fit. This is equivalent to the number 
                         #of iterations and the number of basis functions in the additive expansion
-                        n.trees = c(100, 500), #1e4 #кол-во деревьев
+                        n.trees = c(80, 100, 200, 300), #1e3, 1e4 #кол-во деревьев на 500 уже не хватает 30ГБ ОЗУ
                         #the maximum depth of variable interactions. 1 implies an additive model, 
                         #2 implies a model with up to 2-way interactions, etc.
                         interaction.depth = c(2,3,4), 
                         #a shrinkage parameter applied to each tree in the expansion. 
                         #Also known as the learning rate or step-size reduction
-                        shrinkage= c(1e-3, 0.01, 0.1) #learning rate #1, 1.1
+                        shrinkage= c(0.1) #learning rate #0.01, 0.1,1, 1.1
                           )
-#                      ,tuneLength=20
+#                      ,tuneLength=3
 )})
+# 11255, IF3, 1 min, acc= 74.79%, , n.trees=100, i.depth = 2, shrinkage = 0.1
+# 11255, IF3, 4 min, acc= 74.75%, n.trees=100, i.depth = 4, shrinkage = 0.1
+# 37502, IF3, 
 
-#modGBM
+
+modGBM
 modGBM$finalModel
 #summary(modGBM$finalModel)
 #gbm.perf (modGBM$finalModel)
 #pretty.gbm.tree(modGBM$finalModel)
-varImp(modGBM)
-#summary(modGBM$finalModel)
+#varImp(modGBM)
 ggplot(modGBM)
 
 acc <- modGBM$results[(modGBM$results$n.trees == modGBM$bestTune$n.trees) & 
@@ -709,52 +840,13 @@ acc <- modGBM$results[(modGBM$results$n.trees == modGBM$bestTune$n.trees) &
             (modGBM$results$shrinkage == modGBM$bestTune$shrinkage), "Accuracy"]    
 ```
 
-Из графика видим, что при достаточно большом количестве деревьев (1000 и выше), лучше всего работает маленькое значение параметра скорости обучения (shrinkage = 0.001). Также из графика видно, что модель дает высокую точность при небольших значениях количества деревьев и больших значениях скорости обучения. Скорее всего, это из-за переобученя, поэтому не будем полагаться на автоматически выбранную "лучшую" модель, а возьмем более обученную с большим количеством деревьев и меньшей скоростью обучения, а параметр interaction.depth пусть будет выбран атоматически.
-
-```{r trainGBM2, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=F}
-system.time({
-    set.seed(20150527)
-    modGBM <- train (class ~ ., method="gbm", 
-                    data = dfTrain [importantFeatures],
-                    #preProcess="pca",
-                    trControl = trainControl(method = "cv", number=10, repeats=10)                        
-                    ,n.minobsinnode = minObsInNode # minimum total weight needed in each node
-                    ,verbose=FALSE # не выводить дели рассчета
-                    ,tuneGrid = expand.grid(
-                        #the total number of trees to fit. This is equivalent to the number 
-                        #of iterations and the number of basis functions in the additive expansion
-                        n.trees = c(1e3), #1e4 #кол-во деревьев
-                        #the maximum depth of variable interactions. 1 implies an additive model, 
-                        #2 implies a model with up to 2-way interactions, etc.
-                        interaction.depth = c(2,3,4,5,6,7,8), 
-                        #a shrinkage parameter applied to each tree in the expansion. 
-                        #Also known as the learning rate or step-size reduction
-                        shrinkage= c(1e-3, 1e-2, 1e-1) #learning rate
-                          )
-#                      ,tuneLength=20
-)})
-modGBM
-#modGBM$finalModel
-#plot(modGBM$finalModel)
-varImp(modGBM)
-ggplot(modGBM)
-acc <- modGBM$results[(modGBM$results$n.trees == modGBM$bestTune$n.trees) & 
-            (modGBM$results$interaction.depth == modGBM$bestTune$interaction.depth) &
-            (modGBM$results$shrinkage == modGBM$bestTune$shrinkage), "Accuracy"]    
-dfResults  <- rbind(dfResults,
-                    data.frame (model="Stochastic Gradient Boosting (gbm, ручные параметры)", 
-                          accuracy=acc, variance = "Очень высокий"))
-```
-
-Видим, что вручную подобранная модель использует большее количество параметров пользователя.
-
-Проведем анализ сдвига/разброса на основе Stochastic Gradient Boosting c параметрами:
- - n.minobsinnode = *r minObsInNode*, 
+Ничего интересного в результатах. Далее не рассматриваем.
+?Проведем анализ сдвига/разброса на основе Stochastic Gradient Boosting c параметрами:
  - n.trees = **r modGBM$bestTune$n.trees**, 
  - interaction.depth = **r modGBM$bestTune$interaction.depth**, 
  - shrinkage = **r modGBM$bestTune$shrinkage**.
 
-```{r biasAndVarianceGBM, echo=FALSE, warning=FALSE, message = FALSE, eval=F}
+```{r biasAndVarianceGBM, echo=FALSE, warning=FALSE, message = FALSE, eval=FALSE}
 set.seed(1234)
 #library(caret)
 res <- data.frame()
@@ -781,12 +873,18 @@ res <- foreach  (m = ceiling(seq (nrow(dfTrain)*0.7, nrow(dfTrain), length.out=1
     rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
 }
 
-ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
-    geom_line(size=1) + geom_point(size=5) +
-    xlab("Размер обучающей выборки (m)") + 
-    ylab ("Ошибка (1-Accuracy)") + ggtitle("Stochastic Gradient Boosting (gbm)")+
-    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
-    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
+# на сокращенных выборках
+myPlotLearningCurve (dfTrain, dfTest, method = "gbm", targetVariable = "y", 
+                     featuresList = importantFeatures3,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                                n.trees = modGBM$bestTune$n.trees,
+                                interaction.depth = modGBM$bestTune$interaction.depth, 
+                                shrinkage = modGBM$bestTune$shrinkage)
+                                ),
+                     title = "Stochastic Gradient Boosting (gbm)",
+                     cvRepeats = 3)
+
 
 dfResults  <- rbind(dfResults,
                     data.frame (model="Stochastic Gradient Boosting (gbm)", 

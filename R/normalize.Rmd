@@ -66,8 +66,45 @@ for (i in 1:nChunks) {
 
 ```
 
-# выборочная нормализация
+# Нелинейная нормализация (Yeo Johnson)
 
+Нормализуем все числовые переменные методом Yeo Johnson, а затем результат нормализуем в диапазон [0,1]
+```{r normYeoJohnson, echo=FALSE}
+preNormYJR <- preProcess (dfTrainCM[colNumeric], method=c("YeoJohnson", "range") )
+dfNormYJR <- predict(preNormYJR, dfTrainCM[colNumeric])
+
+# NYJR означает нормалтзацию YeoHohnson с последующим масштабированием [0,1] (NormYeaJohnsonRange)
+dfTrainCMYJR <- dfTrainCM
+dfTrainCMYJR[colNumeric] <- dfNormYJR
+#class(dfTrainCMNR[,1])
+
+saveRDS (dfTrainCMYJR, "../data/train_ConstMedianYeoJohnsonRange.rds")
+
+## аналогично обрабатываем тестовые данные
+dfTestCMYJR <- dfTestCM
+dfTestCMYJR[colNumeric] <- predict(preNormYJR, dfTestCM[colNumeric])
+saveRDS (dfTestCMYJR, "../data/test_ConstMedianYeoJohnsonRange.rds")
+```
+
+Посмотрим графически на результаты нормализации на 5% данных.
+
+```{r normYJRScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrainCM$y, p = 0.05, list = FALSE, times = 1)
+#ncol(dfNormNumeric) #41 шт
+nChunks <- 7
+parts <- cut2(1:ncol(dfNormYJR), g=nChunks, onlycuts=TRUE  )
+parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
+for (i in 1:nChunks) {
+    fp <- featurePlot (x = dfNormYJR[inEDA,][parts[i]:parts[i+1]-1],
+             y = dfTrainCM$y,
+             plot="pairs", auto.key=list(columns=2))
+    print (fp)
+    #cat(i)
+}
+```
+
+# выборочная нормализация
 TODO:
 
 1. Вынести построение Scatterplot в отдельную функцию.

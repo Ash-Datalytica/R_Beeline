@@ -14,3 +14,14 @@ gplots
 ROCR
 randomForest
 nnet
+plyr
+dplyr
+survival
+Formula
+Hmisc
+RRF
+C50
+ipred
+Rcpp
+RSNNS
+pROC
