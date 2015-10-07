@@ -6,6 +6,7 @@
 
 # R data files from past sessions
 .RData
+/R/.RData
 
 # R cache files
 /R/*_cache
