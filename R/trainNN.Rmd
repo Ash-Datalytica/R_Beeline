@@ -1,0 +1,408 @@
+---
+title: "Обучение нейросетевых моделей"
+author: "Alexey Shovkun"
+date: "07 октября 2015 г."
+output: html_document
+---
+
+
+```{r init, echo=FALSE, message=FALSE}
+#install.packages("rpart")
+#install.packages("ROCR")
+#require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+#require(Hmisc) #cut2
+#require(mice)
+require(parallel) #detectCores()
+require(doSNOW)
+require (ggplot2)
+require(gridExtra)
+require(rattle) #fancyRpartPlot
+require(reshape2) #melt
+#require(rpart)
+require(ROCR) #myPlotROC()
+require (plyr); require(dplyr) #чтобы загружались именно в таком порядке
+
+eval(parse('common.R',encoding = "UTF-8"))
+
+nCores <- detectCores() 
+#nCores <- 6
+cl<-makeCluster(nCores) # оставляем одно ядро на инфраструктуру и параллельные процессы
+registerDoSNOW(cl) # Register the cores.
+
+
+#learningCurvePoints <- ifelse (nCores < 11, 10, nCores-1) # Кол-во точек (моделей) для построения кривой обучения
+learningCurvePoints <- 8
+dfResults <- NULL
+#Sys.getlocale() #en_US.UTF-8
+#Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
+#sessionInfo()
+trellis.par.set(caretTheme())
+
+# загружаем списки параметров importantfeaturesN
+load ("../data/features.rds")
+```
+
+
+
+Выделяем обучающую и тестовую выборки. Проверку качества модели в процессе подбора её параметров будем делать с использованием метода перекрестной проверки (cross validation) на обучающей выборке. Тестовая выборка будет использована **только** для оценки качества результирующей модели.
+Если использовать всю обучающую выборку для выбора модели, то уходит очень много времени на рассчеты. Поэтому *выбор* модели будем делать на 20% от всех обучающих данных. Если при оценке какой-то модели окажется, что ее можно улучшить, увеличив размер обучающей выборки, то у нас будет такая возможность!
+
+```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
+set.seed(20150415)
+#dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
+dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+#class(dfTrainFull[,1]) #factor
+
+
+## сокращаем объем исследуемых данных.
+inSelection <- createDataPartition(dfTrainFull$y, p = .3, list = FALSE, times = 1)
+dfTrain <- dfTrainFull[inSelection,]
+inTrain <- createDataPartition(dfTrain$y, p = .75, list = FALSE, times = 1)
+dfTest <- dfTrain[-inTrain,]
+dfTrain <- dfTrain[inTrain,]
+#summary(dfTrain)
+
+# полный объем данных
+inTrainFull <- createDataPartition(dfTrainFull$y, p = .75, list = FALSE, times = 1)
+dfTestFull <- dfTrainFull[-inTrainFull,]
+dfTrainFull <- dfTrainFull[inTrainFull,]
+```
+
+Размеры выборок: 
+    
+- Сокращенная обучающая: `r nrow(dfTrain)` экземпляров.
+
+- проверочная: отсутствует, т.к. применяем кросс-валидацию.
+
+- Сокращенная тестовая: `r nrow(dfTest)` экземпляров.
+
+- Полная обучающая: `r nrow(dfTrainFull)` экземпляров.
+
+- Полная тестовая: `r nrow(dfTestFull)` экземпляров.
+
+
+
+### Multi Layer Perceptron (RSNNS)
+
+Делаем оценку количества итераций и других параметров на сокращенных выборках.
+Резулььтаты:
+
+```
+ DataType  Size   Feat maxIter Time  NN Size   Acc
+ CMNR      11255, IF1, 1500,    8m,    6       55.42%
+ CMYJR     11255, IF3, 1500,    11m,   8       68.59%
+ CMSS      11255, IF3, 500,     20s,   6       58.93 %
+ CMSS      11255, IF3, 1500,    42s,   6       58.65 %
+ 
+```
+
+```{r trainRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain)
+
+maxIter <- 1500
+system.time({
+   set.seed(20151006)
+    modRSNNS <- train (y ~ ., method="mlp", #mlpWeightDecay
+                    data = dfTrain [importantFeatures3], #
+                    trControl = trainControl(method = "cv", number=10, repeats=10),
+                    maxit= maxIter, #nrow(dfTrain)*2,                    
+                    learnFunc= "BackpropMomentum", 
+                    #1) learning param (0.1:2), 2) momentum term (0:1), 
+                    #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
+                    #4) the maximum difference
+                    #see SNNS User Manual, pp. 67
+                    learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+                    hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
+                    tuneGrid = expand.grid(
+                          size = c(6, 7, 8)
+                          )
+#                      tuneLength=4
+)}) 
+# CMNR
+# 11255, IF1, maxIter=200, 6 min, erorrs, size=5, acc=49.76%
+# 11255, IF1, maxIter=500, 7 min, erorrs, size=7, acc=50.52%%
+# 11255, IF1, maxIter=1500, 8 min, erorrs, size=6, acc= 51.75%
+# 11255, IF3, maxIter=1500,  min, erorrs, size= , acc= %55.42%
+# CMYJR
+# см вверху 
+
+
+
+modRSNNS
+#modRSNNS$finalModel
+#summary(modRSNNS$finalModel)
+ggplot(modRSNNS)
+#par(mfrow=c(1,1))
+plotIterativeError(modRSNNS$finalModel)
+#modRSNNS$finalModel$IterativeFitError
+#varImp(modRSNNS)
+
+# acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size) & 
+#             (modRSNNS$results$decay == modRSNNS$bestTune$decay), "Accuracy"]    
+acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size), "Accuracy"]    
+
+```
+
+?Последний график, показывает, что при увеличении количества итераций ошибка стремится к 0, т.е. модель склонна к переобучению. Ограничим число итераций по правилю "клюшки" 200 итерациями.
+
+Проведем анализ полноты обучения для полученной нейросети RSNNS с параметрами:
+
+- maxit = `r maxIter`.
+- learnFunc = BackpropMomentum.
+- learnFuncParams = c(0.1, 0.03, 0.1, 0.001).
+- hiddenActFunc = Act_TanH.
+- size = `r modRSNNS$bestTune$size`.
+
+```{r biasAndVarianceRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+# короткие
+myPlotLearningCurve (dfTrain, dfTest, method = "mlp", targetVariable = "y", 
+                     featuresList = importantFeatures3,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                        size = modRSNNS$bestTune$size
+                        ),
+                     title = "Нейросеть RSNNS (mlp)",
+                     cvRepeats = 3,
+                     maxit = maxIter,                     
+                     learnFunc= "BackpropMomentum",
+                     #learning param 0.1:2, momentum term, flat spot elimination value, the maximum difference
+                     #see SNNS User Manual, pp. 67
+                     learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+                     hiddenActFunc = "Act_TanH" 
+                     )
+
+detach("package:RSNNS", unload=TRUE)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Multi Layer Perceptron (RSNNS)", 
+                          accuracy=acc, variance = "?Высокий"))
+
+```
+
+Модель показывает неплохую точность на тестовой выборке, однако разброс довольно велик.
+
+
+
+### Нейросеть с 1 уровнем (nnet)
+
+Можно применить нейросеть с предварительным отбором параметров на основе метода главных компонент (pcaNNet), но мы уже отобрали наиболее информативные параметры, поэтому используем обычную одноуровневую нейросеть (nnet).
+
+```{r trainNNET, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+#View (dfTrain [, -c(1, which(nzv$nzv))])
+#pcaNNet=Neural Networks with Feature Extraction
+
+maxIter <- 1000
+system.time({
+    set.seed(20151004)
+    modNNET <- train (y ~ ., method="nnet", #nnet, pcaNNet
+                     #data = dfTrainFull [importantFeatures1], # 
+                     data = dfTrainFull [importantFeatures3], # 
+                     #data = dfTrainFull [importantFeatures4], # 73.69
+                     #data = dfTrain [allFeatures], #pcaNNet, 
+                     maxit = maxIter, #Макс
+                     trace=FALSE, # FALSE-для более быстрого рассчета
+                     #thrash=0.99, #для pcaNNet
+                     trControl = trainControl(method = "cv", number=10, repeats=10),
+                     tuneGrid = expand.grid(
+                          decay = c(1e-4, 1e-3), #1e-4, 1e-3, 0.1,0.33
+                          size = c(7, 8, 9, 10, 11) # 7 выходных классов
+                     )
+#                      tuneLength=10
+    )
+}) 
+#nnet. CMNR:
+#maxIter=100, IF2, train=11255, acc= 56.43% , 2 min
+#maxIter=100, IF1, train=11255, acc= 51.95% , 100 sec
+#maxIter=500, IF1, train=11255, acc= 61.0% , 7min (size=5, decay=0.001)
+#maxIter=500, IF1, train=37502, acc= 67.3% , 25min (size=8, decay=0.001)
+#maxIter=500, IF1, train=37502, acc= 68.7% , 25min (size=6, decay=0.0001)
+#maxIter=1000, IF3, train=37502, acc= 72.55% , 30 min (size= 9, decay=0.0001)
+#maxIter=1000, IF4, train=37502, acc= 72.89% , 15 min (size= 9, decay=0.0001)
+#maxIter=10 000, IF4, train=37502, acc= 73.13% , 53 min (size= 9, decay=0.0001)
+
+#nnet. CMYJR:
+#maxIter=1000, IF4, train=37502, acc= 73.69% , 40 min (size= 9, decay=1e-4)
+
+#nnet. CMSS:
+#maxIter=1000, IF3, train=37502, acc= 64.44% , 3 min (size= 7, decay=1e-4)
+
+
+modNNET
+ggplot(modNNET)
+#modNNET$finalModel
+#summary(modNNET$finalModel)
+#varImp(modNNET)
+
+acc <- modNNET$results[(modNNET$results$size == modNNET$bestTune$size) & 
+                (modNNET$results$decay == modNNET$bestTune$decay), "Accuracy"]    
+
+```
+
+Результаты:
+```
+ DataType  Size   Feat maxIter Time  NN Size   decay  Acc
+ CMNR      11255, IF3  1000     30m    9       1e-4   72.55% 
+ CMNR      11255, IF4  1000     15m    9       1e-4   72.89%
+ CMYJR     37502  IF4  1000     40m,   9       1e-4?   73.69%
+ CMYJR     37502, IF3  1000     77m,   10      1e-3   73.64%
+ CMYJR     37502, IF3  1000     3m,    7       1e-4   64.44%
+```
+Проведем анализ полноты обучения для полученной нейросети nnet с параметрами:
+
+- maxit = **`r maxIter`**,
+- size = **`r modNNET$bestTune$size`**,
+- decay = **`r modNNET$bestTune$decay`**.
+
+```{r biasAndVarianceNNET, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
+
+#debugonce(myPlotLearningCurve)
+myPlotLearningCurve (dfTrainFull, dfTestFull, method = "nnet", targetVariable = "y", 
+                     featuresList = importantFeatures1,
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                        size = modNNET$bestTune$size,
+                        decay = modNNET$bestTune$decay
+                        ),
+                     title = "Нейросеть (nnet)",
+                     cvRepeats = 3)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Neural network (nnet)", 
+                          accuracy=acc, variance ="Низкий"))
+
+```
+
+
+
+### Анализ качества обученных моделей
+
+```{r results, echo=FALSE, warning=FALSE, message = FALSE}
+dfResults
+```
+
+
+
+### Проверка лучшей модели на тестовой выборке 
+ 
+В качестве победившей по качеству предсказания на обучающих данных выбираем модель "Случайный лес (rf) ". Оценим качество ее предсказания на тестовой выборке, которую модель не "видела" при обучении.
+ 
+```{r checkAccuracy, echo=FALSE, warning=FALSE, message = FALSE}
+# делаем свою функцию, чтобы исправить баг библиотеки caret 6.0-41
+myPredict.train <- function (object, newdata = NULL, type = "raw", na.action = na.omit, 
+    ...) 
+{
+    if (all(names(object) != "modelInfo")) {
+        object <- update(object, param = NULL)
+    }
+    if (!is.null(object$modelInfo$library)) 
+        for (i in object$modelInfo$library) do.call("require", 
+            list(package = i))
+    if (!(type %in% c("raw", "prob"))) 
+        stop("type must be either \"raw\" or \"prob\"")
+    if (type == "prob") {
+        if (is.null(object$modelInfo$prob)) 
+            stop("only classification models that produce probabilities are allowed")
+    }
+    if (!is.null(newdata)) {
+        if (inherits(object, "train.formula")) {
+            newdata <- as.data.frame(newdata)
+            rn <- row.names(newdata)
+            Terms <- delete.response(object$terms)
+            m <- model.frame(Terms, newdata, na.action = na.action, 
+                xlev = object$xlevels)
+            if (!is.null(cl <- attr(Terms, "dataClasses"))) 
+                .checkMFClasses(cl, m)
+            keep <- match(row.names(m), rn)
+            newdata <- model.matrix(Terms, m, contrasts = object$contrasts)
+            xint <- match("(Intercept)", colnames(newdata), nomatch = 0)
+            if (xint > 0) 
+                newdata <- newdata[, -xint, drop = FALSE]
+        }
+    }
+    else {
+        if (!is.null(object$trainingData)) {
+            newdata <- if (object$method == "pam") 
+                object$finalModel$xData
+            else object$trainingData
+        }
+        else stop("please specify data via newdata")
+    }
+    if (type == "prob") {
+        out <- extractProb(list(object), unkX = newdata, unkOnly = TRUE, 
+            ...)
+        obsLevels <- levels(object)
+        out <- out[, paste0("X", obsLevels), drop = FALSE]
+    }
+    else {
+        out <- extractPrediction(list(object), unkX = newdata, 
+            unkOnly = TRUE, ...)$pred
+    }
+    out
+}
+
+#modFinal <- modGLMBoost #
+#modFinal <- modSVM
+#modFinal <- modLB #70,64% (полное обучение/тест)
+#modFinal <- modDT # 
+modFinal <- modRF # 73,8% (сокр обучение/тест)
+#modFinal <- modGBM #
+#modFinal <- modRSNNS #
+#modFinal <- modNNET #
+#modFinal <- modGLMBoost # 71% на importantFeatures2, 75% на allFeatures
+#debugonce(predict)
+#predict(modFinal, newdata=dfTest, type="prob")
+
+# Для всех, кроме modLB:
+predTest <- predict(modFinal, newdata=dfTestFull) 
+# # для modLB:
+# predTest <- myPredict.train(modFinal, newdata=dfTestFull, type = "prob") 
+# predTest <- (apply(predTest,1, which.max) - 1)
+# predTest <- as.factor(predTest)
+
+cm <- caret::confusionMatrix(data = predTest, reference = dfTestFull$y,
+                             positive= "1")
+accFinal <- cm$overal[1]
+cm
+```
+
+## Предсказние новых 
+
+```{r predictNew, echo=FALSE, warning=FALSE, message = FALSE, eval=TRUE}
+
+dfFinalTest <- readRDS("../data/test_ConstMedianRange.rds")
+
+# для всех, кроме modLB (LogitBoost)
+predicted <- predict (modFinal, newdata = dfFinalTest)
+# # для LogitBoost
+# predicted <- myPredict.train (modLB, newdata = dfFinalTest, type = "prob") 
+# predicted$y <- apply(predicted,1, which.max) - 1
+# #View(predicted)
+# predicted <- as.factor(predicted$y)
+
+
+
+#03.10.15 - RF, сокр 30% = 74.91%
+#05.10.15 - LogitBoost, полн 100% = 70.81%
+
+
+dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted,
+                           stringsAsFactors = FALSE)
+
+#LogitBoost дает предсказание NA, если два класса получили одинаковые голоса.
+
+write.table(dfPredicted, "../data/151005_sol_CostMedianRange.csv", sep=",", quote=FALSE, row.names=FALSE)
+```
+
+
+Результаты публикации:
+
+ - для модели Случайный лес (rf) точность оказалась **74.91%**. Показатель невысокий, однако это первая публикация и она показала, что применяемый для выбора модели подход для оценки точности предстказания работает хорошо - в реальности точность оказалась даже чуть лучше, чем ожидалось.  
+ - для модели (LogitBoost) точность оказалась **70.81%**. Низкая точность обусловлена спефикой модели (NA в предсказанных классах).  
+ 
+
+```{r stopCluster, echo=FALSE, warning=FALSE, message = FALSE, cache=FALSE}
+stopCluster(cl) # Explicitly free up cores again.
+
+```

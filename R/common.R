@@ -1,6 +1,6 @@
 ## Нормализовать числовую переменную в диапазон (-1,1)
-## mode="median" Тогда после нормализации Медиана новоро распределения будет равна targetValue
-## mode="mean" Тогда после нормализации Среднее новоро распределения будет равно targetValue
+## mode="median" Тогда после нормализации Медиана нового распределения будет равна targetValue
+## mode="mean" Тогда после нормализации Среднее нового распределения будет равно targetValue
 normalizeTanh <- function (x, mode="median", targetValue=0.5) {
     if (mode == "median") {
         alpha <- median (x)/atanh(targetValue)
@@ -86,4 +86,30 @@ myPlotLearningCurve <- function (
         scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
         scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
     return(p)
+}
+
+## Нарисовать несколько графиков с попарным сравнением параметров
+##
+##
+myPlotFeatures <- function (
+    data, # data frame
+    y, # столбец с целевой переменной
+    featuresInGraph = 6 # кол-во параметров на одном графике
+){
+    require (ggplot2)
+    require(Hmisc) #cut2
+    #set.seed(20150926)
+    #inEDA <- createDataPartition(dfTrainCM$y, p = 0.05, list = FALSE, times = 1)
+    #ncol(dfNormNumeric) #41 шт
+    nChunks <- (ncol(data) %/% featuresInGraph) + 1 # кол-во графиков
+    #cut2(1:41, g=7, onlycuts=TRUE  )
+    parts <- cut2(1:ncol(data), g=nChunks, onlycuts=TRUE  )
+    parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
+    for (i in 1:nChunks) {
+        fp <- featurePlot (x = data[parts[i]:(parts[i+1]-1)],
+                           y = y,
+                           plot="pairs", auto.key=list(columns=2))
+        print (fp)
+        #cat(i)
+    }
 }

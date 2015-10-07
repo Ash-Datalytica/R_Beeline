@@ -14,8 +14,16 @@ require(Hmisc) #cut2
 #require(parallel) #detectCores()
 #require(doSNOW)
 
+eval(parse('common.R',encoding = "UTF-8"))
+trellis.par.set(caretTheme())
+```
+
+```{r loadData, echo=FALSE}
 dfTrainCM <- readRDS("../data/train_ConstMedian.rds")
 dfTestCM <- readRDS("../data/test_ConstMedian.rds")
+whichNumeric <- sapply(dfTrainCM, class)=="numeric" # Булева маска числовых столбцов
+colNumeric <- colnames(dfTrainCM)[which(whichNumeric)] # Список имен числовых столбцов
+
 ```
 
 Необходимо нормализовать значения параметров типа numeric. Рассмотрим 2 варианта нормализации:
@@ -26,9 +34,6 @@ dfTestCM <- readRDS("../data/test_ConstMedian.rds")
 # Линейная нормализация
 
 ```{r normLinear, echo=FALSE}
-whichNumeric <- sapply(dfTrainCM, class)=="numeric" # Булева маска числовых столбцов
-colNumeric = colnames(dfTrainCM)[which(whichNumeric)] # Список имен числовых столбцов
-
 preNormLinear <- preProcess (dfTrainCM[colNumeric], method=c("range") )
 #preNormLinear$ranges
 dfNormNumeric <- predict(preNormLinear, dfTrainCM[colNumeric])
@@ -53,23 +58,14 @@ saveRDS (dfTestCMNR, "../data/test_ConstMedianRange.rds")
 set.seed(20150926)
 inEDA <- createDataPartition(dfTrainCM$y, p = 0.05, list = FALSE, times = 1)
 #ncol(dfNormNumeric) #41 шт
-nChunks <- 7
-parts <- cut2(1:ncol(dfNormNumeric), g=nChunks, onlycuts=TRUE  )
-parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
-for (i in 1:nChunks) {
-    fp <- featurePlot (x = dfNormNumeric[inEDA,][parts[i]:parts[i+1]-1],
-             y = dfTrainCM$y,
-             plot="pairs", auto.key=list(columns=2))
-    print (fp)
-    #cat(i)
-}
+myPlotFeatures (dfNormNumeric[inEDA,], dfTrainCM$y, featuresInGraph = 6 )
 
 ```
 
-# Нелинейная нормализация (Yeo Johnson)
+# Нелинейная нормализация (Yeo Johnson, range)
 
 Нормализуем все числовые переменные методом Yeo Johnson, а затем результат нормализуем в диапазон [0,1]
-```{r normYeoJohnson, echo=FALSE}
+```{r normYeoJohnsonRange, echo=FALSE}
 preNormYJR <- preProcess (dfTrainCM[colNumeric], method=c("YeoJohnson", "range") )
 dfNormYJR <- predict(preNormYJR, dfTrainCM[colNumeric])
 
@@ -91,28 +87,95 @@ saveRDS (dfTestCMYJR, "../data/test_ConstMedianYeoJohnsonRange.rds")
 ```{r normYJRScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
 set.seed(20150926)
 inEDA <- createDataPartition(dfTrainCM$y, p = 0.05, list = FALSE, times = 1)
-#ncol(dfNormNumeric) #41 шт
-nChunks <- 7
-parts <- cut2(1:ncol(dfNormYJR), g=nChunks, onlycuts=TRUE  )
-parts[nChunks] <- parts[nChunks]+1 #для единообразия следующего цикла
-for (i in 1:nChunks) {
-    fp <- featurePlot (x = dfNormYJR[inEDA,][parts[i]:parts[i+1]-1],
-             y = dfTrainCM$y,
-             plot="pairs", auto.key=list(columns=2))
-    print (fp)
-    #cat(i)
-}
+myPlotFeatures (dfNormYJR[inEDA,], dfTrainCM$y, featuresInGraph = 6 )
 ```
 
-# выборочная нормализация
-TODO:
+# Нелинейная нормализация (Yeo Johnson)
 
-1. Вынести построение Scatterplot в отдельную функцию.
+Нормализуем все числовые переменные методом Yeo Johnson, а затем результат нормализуем в диапазон [0,1]
+```{r normYeoJohnson, echo=FALSE}
+preNormYJ <- preProcess (dfTrainCM[colNumeric], method=c("YeoJohnson") )
+dfNormYJ <- predict(preNormYJ, dfTrainCM[colNumeric])
 
+# NYJR означает нормалтзацию YeoHohnson с последующим масштабированием [0,1] (NormYeaJohnsonRange)
+dfTrainCMYJ <- dfTrainCM
+dfTrainCMYJ[colNumeric] <- dfNormYJ
+#class(dfTrainCMNR[,1])
 
-В результате визуального анализа графиков разброса из этапа Разведочного анализа данных (EDA) определяем следующий алгоритм нормализации:
+saveRDS (dfTrainCMYJ, "../data/train_ConstMedianYeoJohnson.rds")
 
-  - Линейная нормализация в диапазон [0,1] 
-  - Линейная нормализация в диапазон [-1,1] 
-  - Нелинейная нормализация в диапазон [-1,1] (метод YeoJohnson): x8
-  
+## аналогично обрабатываем тестовые данные
+dfTestCMYJ <- dfTestCM
+dfTestCMYJ[colNumeric] <- predict(preNormYJ, dfTestCM[colNumeric])
+saveRDS (dfTestCMYJ, "../data/test_ConstMedianYeoJohnson.rds")
+```
+
+Посмотрим графически на результаты нормализации на 5% данных.
+
+```{r normYJScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrainCMYJ$y, p = 0.05, list = FALSE, times = 1)
+#ncol(dfNormNumeric) #41 шт
+myPlotFeatures (dfNormYJ[inEDA,], dfTrainCMYJ$y, featuresInGraph = 6 )
+
+```
+
+# Выборочная нормализация
+
+```{r normSelected, echo=FALSE}
+# параметры с отрицательными начениями
+colNegative <- colnames(dfTrainCM[colNumeric]) [apply (dfTrainCM[colNumeric], 2, min)<0]
+# параметры с явно выраженными выделяющимия значениями (визуально)
+colOutliers <- c("x8", "x13", "x23", "x25", "x26", "x28", "x29", "x30", "x32", 
+                 "x36", "x37", "x38", "x39", "x40", "x43", "x44", "x55", "x61")
+# параметры с НЕявно выраженными выделяющимия значениями (визуально)
+colProbableOutliers <- c("x34", "x35", "x45", "x46", "x47", "x48", "x49", "x50", "x57", "x58", "x59")
+
+# Подготовим 2 варианта нормализации.
+# В первом варианте подвергнем гиперболическому тангенсу только отрицательные параметры и
+# параметры с явно выраженными выбросами
+colTanhSure <- union(colNegative, colOutliers)
+# остальные будем нормализовать линейно
+colNotTanhSure <- setdiff(colNumeric, colTanhSure)
+
+# Тангенс. хотим, чтобы среднее переменной после нормализации была = 0,5 
+# Для некоторых параметров среднее дает более равномерные картинки, чем медиана.
+dfTanhSure <- as.data.frame(apply(dfTrainCM[colTanhSure], 2, function(col){normalizeTanh(col,mode="median", targetValue = 0.5)}))
+#apply (dfTanhSure, 2, median) # все = 0.5
+# Линейно
+preSelectedLinear <- preProcess (dfTrainCM[colNotTanhSure], method=c("range") )
+dfSelectedLinear <- predict(preSelectedLinear, dfTrainCM[colNotTanhSure])
+
+# Собираем результат CMSS = ConstMedianSelectedSure
+dfTrainCMSS <- dfTrainCM
+dfTrainCMSS[colTanhSure] <- dfTanhSure
+dfTrainCMSS[colNotTanhSure] <- dfSelectedLinear
+saveRDS (dfTrainCMSS, "../data/train_ConstMedianSelectedSure.rds")
+
+## аналогично обрабатываем тестовые данные
+dfTestCMSS <- dfTestCM
+dfTestCMSS[colTanhSure] <- as.data.frame(apply(
+    dfTestCM[colTanhSure], 2, 
+    function(col){normalizeTanh(col,mode="median", targetValue = 0.5)}))
+dfTestCMSS[colNotTanhSure] <- predict(preSelectedLinear, dfTestCM[colNotTanhSure])
+saveRDS (dfTestCMSS, "../data/test_ConstMedianSelectedSure.rds")
+
+```
+
+Нормализация гиперболическим тангенсом: **`r colTanhSure`**.
+
+Линейная нормализация: **`r colNotTanhSure`**.
+
+Посмотрим графически на результаты нормализации на 5% данных.
+
+```{r normSelectedSureScatter, echo=FALSE, warning=FALSE, message = FALSE, fig.width=9, fig.height=9, cache=TRUE }
+set.seed(20150926)
+inEDA <- createDataPartition(dfTrainCMSS$y, p = 0.05, list = FALSE, times = 1)
+#ncol(dfNormNumeric) #41 шт
+myPlotFeatures (dfTrainCMSS[inEDA,union(colTanhSure, colNotTanhSure)], dfTrainCMSS$y, featuresInGraph = 6 )
+
+```
+
+#TODO
+ - Некоторые параметры нормализовывать гипертангенсом через серденее (х38)
+
