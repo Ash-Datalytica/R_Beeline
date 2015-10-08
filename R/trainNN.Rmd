@@ -51,8 +51,8 @@ load ("../data/features.rds")
 
 ```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
 set.seed(20150415)
-#dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
-dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
 #class(dfTrainFull[,1]) #factor
 
 
@@ -93,6 +93,7 @@ dfTrainFull <- dfTrainFull[inTrainFull,]
  DataType  Size   Feat maxIter Time  NN Size   Acc
  CMNR      11255, IF1, 1500,    8m,    6       55.42%
  CMYJR     11255, IF3, 1500,    11m,   8       68.59%
+ CMYJR     37502, IF3, 10 000   145 m  10      71.84%
  CMSS      11255, IF3, 500,     20s,   6       58.93 %
  CMSS      11255, IF3, 1500,    42s,   6       58.65 %
  CMSS      37502, IF3, 100 000  97m,   6       64.56%
