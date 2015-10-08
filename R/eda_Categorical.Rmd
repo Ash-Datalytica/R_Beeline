@@ -145,6 +145,16 @@ dfTrainCSMNR[colLongCat] <- dfCatSubstTrain
 saveRDS(dfTrainCSMNR, "../data/train_ConstSubstMedianRange.rds")
 #str(dfTrainCSMNR)
 
+# CSMYJR  
+dfTrainCSMYJR <- dfTrainCMYJR
+dfTrainCSMYJR[colFactor] <- dfCatSubstTrain
+saveRDS(dfTrainCSMYJR, "../data/train_ConstSubstMedianYeoJohnsonRange.rds")
+
+# CSMSS  
+dfTrainCSMSS <- dfTrainCMSS
+dfTrainCSMSS[colFactor] <- dfCatSubstTrain
+saveRDS(dfTrainCSMSS, "../data/train_ConstSubstMedianSelectedSure.rds")
+
 ```
 
 
