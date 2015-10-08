@@ -113,3 +113,27 @@ myPlotFeatures <- function (
         #cat(i)
     }
 }
+
+
+## Берет столбец и заменяем в нем все пустые значения (na.value) на одно из непустых значений из этого же столбца
+## Вероятность получить новое значение пропорциональна его частоте в векторе
+##
+replaceNACategorical <- function (data, # dataframe, в котором надо заменить столбцы 
+                                  na.value = NA # Признак того, что фича NA
+){                                  
+    # вспомогательная функция, отрабатывает 1 столбец
+    replaceNACategoricalCol <- function (catFeature, # вектор или фактор с категорийной фичей
+                                         na.value = NA # Признак того, что фича NA
+    ){
+        if (is.na(na.value)) {
+            whichNA <- is.na(catFeature)
+        } else {
+            whichNA <- catFeature == na.value    
+        }
+        catFeature[whichNA] <- sample(catFeature[!whichNA], size = sum(whichNA), replace = TRUE)
+        return(catFeature)
+    }
+    # результат
+    as.data.frame(apply(data, 2, function(x){replaceNACategoricalCol(x, na.value)}),
+                  stringsAsFactors = TRUE)
+}  
