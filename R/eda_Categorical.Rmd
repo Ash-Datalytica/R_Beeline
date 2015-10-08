@@ -41,6 +41,7 @@ eval(parse('common.R',encoding = "UTF-8"))
 dfTrainCM <- readRDS ("../data/train_ConstMedian.rds")
 dfTrainCMNR <- readRDS ("../data/train_ConstMedianRange.rds")
 dfTrainCMYJR <- readRDS ("../data/train_ConstMedianYeoJohnsonRange.rds")
+dfTrainCMSS <- readRDS ("../data/train_ConstMedianSelectedSure.rds")
 
 colClasses <- as.character (sapply(dfTrainCMNR, class))
 #table(colClasses)
@@ -71,6 +72,39 @@ saveRDS(dfTrainVMNR, "../data/train_ValueMedianRange.rds")
 dfTrainVMYJR <- dfTrainCMYJR
 dfTrainVMYJR[colFactor] <- dfNewFactorTrain
 saveRDS(dfTrainVMYJR, "../data/train_ValueMedianYeoJohnsonRange.rds")
+
+# VMSS  = ValueMedianSelectedSure, Value - замена пустых строк на одно из значений
+dfTrainVMSS <- dfTrainCMSS
+dfTrainVMSS[colFactor] <- dfNewFactorTrain
+saveRDS(dfTrainVMS, "../data/train_ValueMedianSelectedSure.rds")
+
+
+```
+
+## Сокращение различных значений у категорийных параметров
+
+Способ 1, "Замена". У много-категорийных параметров заменить категорию на класс (номер возрастной группы), которая встречается у него чаще всего.
+
+```{r substituteCategorical, echo=FALSE}
+
+```
+
+
+Способ 2, "Упаковка". У много-категорийных параметров заменить *упаковать* категории в группы по частоте встречания.
+
+```{r packCategorical, echo=FALSE}
+require (dplyr)
+#importantFeatures1 включает в себя категорийные параметры с 10 или менее категориями
+maxCategories <- 5 # свертываем параметры до этого числа категорий
+data <- dfTrainVM
+uniqueCount <- sapply(data, function(x){length(unique(x))})
+colLongCat <- names(uniqueCount[colFactor][uniqueCount[colFactor] >= maxCategories])
+
+dfTmp <- data[c(colLongCat[1],"y")]
+View(dfTmp)
+dfTmp1 <- dfTmp %>% group_by (x0,y) %>% summarize(count=n()) %>% #View
+    top_n(1,count) %>% # оставляем только с макс. 
+    group_by(x0) %>% filter(row_number() == 1) %>% View
 
 
 ```
