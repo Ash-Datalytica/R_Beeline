@@ -95,18 +95,19 @@ dfTrainFull <- dfTrainFull[inTrainFull,]
  CMYJR     11255, IF3, 1500,    11m,   8       68.59%
  CMSS      11255, IF3, 500,     20s,   6       58.93 %
  CMSS      11255, IF3, 1500,    42s,   6       58.65 %
+ CMSS      37502, IF3, 100 000  97m,   6       64.56%
  
 ```
 
 ```{r trainRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
 #View (dfTrain)
 
-maxIter <- 1500
+maxIter <- 10000 #10k достаточно для набора CMSS, IF3, full.
 system.time({
    set.seed(20151006)
     modRSNNS <- train (y ~ ., method="mlp", #mlpWeightDecay
-                    data = dfTrain [importantFeatures3], #
-                    trControl = trainControl(method = "cv", number=10, repeats=10),
+                    data = dfTrainFull [importantFeatures3], #
+                    trControl = trainControl(method = "cv", number=10, repeats=5),
                     maxit= maxIter, #nrow(dfTrain)*2,                    
                     learnFunc= "BackpropMomentum", 
                     #1) learning param (0.1:2), 2) momentum term (0:1), 
@@ -116,7 +117,7 @@ system.time({
                     learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
                     hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
                     tuneGrid = expand.grid(
-                          size = c(6, 7, 8)
+                          size = c(6, 7, 8, 9, 10)
                           )
 #                      tuneLength=4
 )}) 
