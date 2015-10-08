@@ -1,0 +1,77 @@
+---
+title: "Работа с категорийными параметрами"
+author: "Alexey Shovkun"
+date: "8 октября 2015 г."
+output: html_document
+---
+
+```{r init, echo=FALSE, message=FALSE}
+#install.packages ("data.table")
+#install.packages ("Hmisc")
+#install.packages ("mice")
+#install.packages ("AppliedPredictiveModelling") # недоступен для R 3.0.2
+#install.packages ("mice")
+#install.packages ("RANN")
+require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+require(Hmisc) #cut2
+require(mice)
+require (ggplot2)
+require(gridExtra)
+require (dplyr)
+
+#require(parallel) #detectCores()
+#require(doSNOW)
+
+eval(parse('common.R',encoding = "UTF-8"))
+
+#nCores <- detectCores()
+##nCores <-6
+#cl<-makeCluster(nCores) # Assign number of cores to use
+#registerDoSNOW(cl) # Register the cores.
+
+```
+
+## Загрузка данных
+
+За основу берем полученные ранее файлы *_ConstMedian.rds и *_ConstMedianRange.rds..
+
+```{r loadData, echo=FALSE}
+dfTrainCM <- readRDS ("../data/train_ConstMedian.rds")
+dfTrainCMNR <- readRDS ("../data/train_ConstMedianRange.rds")
+dfTrainCMYJR <- readRDS ("../data/train_ConstMedianYeoJohnsonRange.rds")
+
+colClasses <- as.character (sapply(dfTrainCMNR, class))
+#table(colClasses)
+colFactor <- colnames(dfTrainCMNR)[colClasses == "factor"]
+colNumeric <- colnames(dfTrainCMNR)[colClasses == "numeric"]
+colLogical <- colnames(dfTrainCMNR)[colClasses == "logical"]
+
+```
+
+## Замена пустых значений у категорийных параметров
+
+Заменим значения "Не определено" (NA) на одно из имеющихся значений (категорий) у данного параметра. Вероятность нового значения пропорциональна его частоте в параметре.
+
+```{r imputeCategorical, echo=FALSE}
+dfNewFactorTrain <- replaceNACategorical(dfTrainCM[colFactor[1]], "Не определено")
+
+# VM  = ValueMedian, Value - замена пустых строк на одно из значений
+dfTrainVM <- dfTrainCM
+dfTrainVM[colFactor] <- dfNewFactorTrain
+saveRDS(dfTrainVM, "../data/train_ValueMedian.rds")
+
+# VMNR  = ValueMedianRange, Value - замена пустых строк на одно из значений
+dfTrainVMNR <- dfTrainCMNR
+dfTrainVMNR[colFactor] <- dfNewFactorTrain
+saveRDS(dfTrainVMNR, "../data/train_ValueMedianRange.rds")
+
+# VMYJR  = ValueMedianRange, Value - замена пустых строк на одно из значений
+dfTrainVMYJR <- dfTrainCMYJR
+dfTrainVMYJR[colFactor] <- dfNewFactorTrain
+saveRDS(dfTrainVMYJR, "../data/train_ValueMedianYeoJohnsonRange.rds")
+
+
+```
+
