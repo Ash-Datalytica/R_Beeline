@@ -19,7 +19,7 @@ require(Hmisc) #cut2
 require(mice)
 require (ggplot2)
 require(gridExtra)
-require (dplyr)
+require (plyr);require (dplyr)
 
 #require(parallel) #detectCores()
 #require(doSNOW)
@@ -56,7 +56,7 @@ colLogical <- colnames(dfTrainCMNR)[colClasses == "logical"]
 Заменим значения "Не определено" (NA) на одно из имеющихся значений (категорий) у данного параметра. Вероятность нового значения пропорциональна его частоте в параметре.
 
 ```{r imputeCategorical, echo=FALSE}
-dfNewFactorTrain <- replaceNACategorical(dfTrainCM[colFactor[1]], "Не определено")
+dfNewFactorTrain <- replaceNACategorical(dfTrainCM[colFactor], "Не определено")
 
 # VM  = ValueMedian, Value - замена пустых строк на одно из значений
 dfTrainVM <- dfTrainCM
@@ -76,7 +76,7 @@ saveRDS(dfTrainVMYJR, "../data/train_ValueMedianYeoJohnsonRange.rds")
 # VMSS  = ValueMedianSelectedSure, Value - замена пустых строк на одно из значений
 dfTrainVMSS <- dfTrainCMSS
 dfTrainVMSS[colFactor] <- dfNewFactorTrain
-saveRDS(dfTrainVMS, "../data/train_ValueMedianSelectedSure.rds")
+saveRDS(dfTrainVMSS, "../data/train_ValueMedianSelectedSure.rds")
 
 
 ```
@@ -86,6 +86,64 @@ saveRDS(dfTrainVMS, "../data/train_ValueMedianSelectedSure.rds")
 Способ 1, "Замена". У много-категорийных параметров заменить категорию на класс (номер возрастной группы), которая встречается у него чаще всего.
 
 ```{r substituteCategorical, echo=FALSE}
+#require (plyr);require (dplyr)
+#importantFeatures1 включает в себя категорийные параметры с 10 или менее категориями
+
+substituteCategorical <- function(data, # data.frame с категорийными параметрами
+                                  y# data.frame с целевым параметром (на что заменять)
+){
+    # Вспомогательная функция, заменяющая один столбец
+    substituteFeature <- function(featureCol, # столбец с категорийной фичей
+                                  substituteCol # столбец, на значения которого заменять. Целевой класс y
+    ){
+        # временный датафрейм для рассчета что на что заменять
+        dfTmp <- cbind(featureCol, substituteCol)
+        #View(dfTmp)
+        allVars <- colnames(dfTmp) # обе переменные
+        featureVar <- allVars[1]
+        dfSubstMap <- dfTmp %>% group_by_ (.dots=allVars) %>% summarize(count=n()) %>% #View
+            top_n(1,count) %>% # оставляем только с макс. 
+            group_by_(.dots=featureVar) %>% filter(row_number() == 1) %>% 
+            select (-count) #%>% View
+        colnames(dfSubstMap)[2] <- "substitute"
+        #View(dfSubstMap)
+        #dfSubstMap
+        names(featureVar) <- featureVar
+        res <- featureCol %>% left_join(dfSubstMap, by = featureVar) %>%
+            select (substitute)
+        #новое имя переменной
+        colnames(res)[1] <- paste0(featureVar,"c")
+        #res[,1] <- as.numeric(res[,1])
+        return(res)
+    }
+    
+    #dfSubst <- apply(data[colLongCat], 2, function(x){substituteFeature(x, data$y)})
+    #dfSubst <- colwise(function(x){substituteFeature(x, data$y)})(data[colLongCat])
+    # dfSubst <- ddply(data, colLongCat[1:2] ,function(x){substituteFeature(x, data$y)}, 
+    #                  .parallel = F, .progress = "text")
+    require(foreach)
+    dfSubst <- foreach (col = colLongCat, .combine=cbind) %do% {
+        substituteFeature(data[col], y)
+    }
+    return (dfSubst)
+}
+
+maxCategories <- 5 # свертываем параметры до этого числа категорий
+uniqueCount <- sapply(dfTrainCM, function(x){length(unique(x))})
+colLongCat <- names(uniqueCount[colFactor][uniqueCount[colFactor] >= maxCategories])
+
+# все категорийные параметры одинаковые,в разных датасетах
+# поэтому. вычисляем замену один раз и вставляем в разные датасеты
+dfCatSubstTrain <- substituteCategorical(dfTrainCM[colLongCat], dfTrainCM$y)
+#View(dfCatSubstTrain) 
+
+# CSMNR  = ConstSubstituteMedianRange, 
+# Const - в коротких категорийных параметрах остается значение "не определено", т.к. оно показало лучшие результаты в RF
+# Substitute - подстановка целевого класса  вместо категорий в длинных категорийных параметрах
+dfTrainCSMNR <- dfTrainCMNR
+dfTrainCSMNR[colLongCat] <- dfCatSubstTrain
+saveRDS(dfTrainCSMNR, "../data/train_ConstSubstMedianRange.rds")
+#str(dfTrainCSMNR)
 
 ```
 
@@ -93,18 +151,7 @@ saveRDS(dfTrainVMS, "../data/train_ValueMedianSelectedSure.rds")
 Способ 2, "Упаковка". У много-категорийных параметров заменить *упаковать* категории в группы по частоте встречания.
 
 ```{r packCategorical, echo=FALSE}
-require (dplyr)
-#importantFeatures1 включает в себя категорийные параметры с 10 или менее категориями
-maxCategories <- 5 # свертываем параметры до этого числа категорий
-data <- dfTrainVM
-uniqueCount <- sapply(data, function(x){length(unique(x))})
-colLongCat <- names(uniqueCount[colFactor][uniqueCount[colFactor] >= maxCategories])
 
-dfTmp <- data[c(colLongCat[1],"y")]
-View(dfTmp)
-dfTmp1 <- dfTmp %>% group_by (x0,y) %>% summarize(count=n()) %>% #View
-    top_n(1,count) %>% # оставляем только с макс. 
-    group_by(x0) %>% filter(row_number() == 1) %>% View
 
 
 ```
