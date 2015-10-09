@@ -53,9 +53,16 @@ load ("../data/features.rds")
 ```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
 set.seed(20150415)
 #dfTrainFull <- readRDS("../data/train_ConstMedianRange.rds")
-dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianRange.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianSelectedSure.rds")
+#dfTrainFull <- readRDS("../data/train_ConstSubstMedianRange.rds") # Длинные категорийные заменены на ниболее вероятный класс
+#dfTrainFull <- readRDS("../data/train_ConstSubstMedianYeoJohnsonRange.rds") # 
+dfTrainFull <- readRDS("../data/train_ConstSubstMedianSelectedSure.rds") # 
 #class(dfTrainFull[,1]) #factor
-
+str(dfTrainFull)
 
 ## сокращаем объем исследуемых данных.
 inSelection <- createDataPartition(dfTrainFull$y, p = .3, list = FALSE, times = 1)
@@ -91,10 +98,17 @@ dfTrainFull <- dfTrainFull[inTrainFull,]
 
 ```
  DataType  Size   Feat nTree Time  mtry   Acc
- CMNR      37502, IF1, 100    8m,           75.1%
- CMYJR     37502, IF1, 100    m,           %
- CMSS      37502, IF1, 100    s,           %
- 
+ CMNR      37502, IF1, 100    8m,           75.1% ??
+ CMNR      37502, IF1, 100    12m,  39      74.82%
+ CMYJR     37502, IF1, 100    12m,  41      74,77%
+ CMSS      37502, IF1, 100    22s!! 39      72.83%
+ CVNR      37502, IF1, 100    12m,  43      74.69%, - нет разницы с CMNR, т.к. наиболее значимые переменные - числовые.
+ CVYJR     37502, IF1, 100    11m,  39      74,64%  - нет разницы с CMYJR, т.к. наиболее значимые переменные - числовые.
+ VMSS      37502, IF1, 100    20s!! 43      72.87%  - --//--
+ VMSS      37502, IF1, 100    20s!! 43      72.87%  - --//--
+ CSMNR     37502, все, 100    17m   81      75.26%
+ CSMYJR    37502, все, 100    18m   81      75.25%
+ CSMSS     37502, все, 100    31s   81      72.50%   
 ```
 
 ```{r trainRandomForest, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
@@ -114,10 +128,10 @@ system.time({
     set.seed(1234)
     modRF <- train (y ~ ., method="rf", 
                     #data = dfTrainFull [importantFeatures1], #
-                    data = dfTrain [importantFeatures2], #
-                    #data = dfTrain [importantFeatures1], # 74.21
-                    trControl = trainControl(method = "cv", number=10, repeats=10),
-                    #количетсво деревьев в лесу.
+                    #data = dfTrain [importantFeatures2], #
+                    data = dfTrainFull, # 
+                    trControl = trainControl(method = "cv", number=10, repeats=5),
+                    #количество деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
                     ntree= nTree, 
                     tuneGrid = expand.grid(mtry=c(
@@ -131,7 +145,7 @@ system.time({
 #                         , ceiling(nPredictors/2)
 #                         , ceiling(nPredictors*2/3)
 #                         , nPredictors
-                        15,17,19, 21, 23, 39, 41, 43, 81
+                        11,13,15,17,19, 21, 23, 39, 41, 43, 81
                         ))
 #                    tuneLength=3
     )
@@ -146,7 +160,9 @@ acc <- modRF$results$Accuracy[as.numeric(rownames(modRF$bestTune)[1])]
 paramRF <- modRF$bestTune$mtry
 ```
 
-Случайный лес показывает несколько меньшую точность по сравнению с деревом решений, поскольку он содержит усредненную оценку от **`r nTree`** деревьев. Зато менее вероятно, что эта модель переообучена, т.е. мы ожидаем, что она с большей вероятностью будет показывать такую же точность на новых данных по сравнению с деревом решений.
+?Случайный лес показывает несколько меньшую точность по сравнению с деревом решений, поскольку он содержит усредненную оценку от **`r nTree`** деревьев. Зато менее вероятно, что эта модель переообучена, т.е. мы ожидаем, что она с большей вероятностью будет показывать такую же точность на новых данных по сравнению с деревом решений.
+
+
 
 Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =`r paramRF`.
 ```{r biasAndVarianceRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}

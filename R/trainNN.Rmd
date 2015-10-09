@@ -51,8 +51,9 @@ load ("../data/features.rds")
 
 ```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
 set.seed(20150415)
-dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
 #dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+dfTrainFull <- readRDS("../data/train_ConstSubstMedianYeoJohnsonRange.rds")
 #class(dfTrainFull[,1]) #factor
 
 
@@ -97,7 +98,7 @@ dfTrainFull <- dfTrainFull[inTrainFull,]
  CMSS      11255, IF3, 500,     20s,   6       58.93 %
  CMSS      11255, IF3, 1500,    42s,   6       58.65 %
  CMSS      37502, IF3, 100 000  97m,   6       64.56%
- 
+ CSMYJR    37502, all, 10 000   6H     10      69.00%
 ```
 
 ```{r trainRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
@@ -107,7 +108,8 @@ maxIter <- 10000 #10k достаточно для набора CMSS, IF3, full.
 system.time({
    set.seed(20151006)
     modRSNNS <- train (y ~ ., method="mlp", #mlpWeightDecay
-                    data = dfTrainFull [importantFeatures3], #
+                    #data = dfTrainFull [importantFeatures3], #
+                    data = dfTrainFull, #
                     trControl = trainControl(method = "cv", number=10, repeats=5),
                     maxit= maxIter, #nrow(dfTrain)*2,                    
                     learnFunc= "BackpropMomentum", 
