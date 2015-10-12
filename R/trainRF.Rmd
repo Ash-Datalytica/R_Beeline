@@ -58,9 +58,9 @@ set.seed(20150415)
 #dfTrainFull <- readRDS("../data/train_ValueMedianRange.rds")
 #dfTrainFull <- readRDS("../data/train_ValueMedianYeoJohnsonRange.rds")
 #dfTrainFull <- readRDS("../data/train_ValueMedianSelectedSure.rds")
-#dfTrainFull <- readRDS("../data/train_ConstSubstMedianRange.rds") # Длинные категорийные заменены на ниболее вероятный класс
+dfTrainFull <- readRDS("../data/train_ConstSubstMedianRange.rds") # Длинные категорийные заменены на ниболее вероятный класс
 #dfTrainFull <- readRDS("../data/train_ConstSubstMedianYeoJohnsonRange.rds") # 
-dfTrainFull <- readRDS("../data/train_ConstSubstMedianSelectedSure.rds") # 
+#dfTrainFull <- readRDS("../data/train_ConstSubstMedianSelectedSure.rds") # 
 #class(dfTrainFull[,1]) #factor
 str(dfTrainFull)
 
@@ -713,332 +713,6 @@ dfResults  <- rbind(dfResults,
 
 
 
-### Метод опорных векторов (Support Vector Machine)
-
-Известно, что для задач классификации лучше подходит ядро на снове радиальной базисной функции или полиномиальное ядро, нежели чем линейное ядро. Тесты показывют, что лучще всего работает полиномиальное ядро, затем идут RBF и линейное ядра. Используем полиномиальное ядро. 
-Эксперименты показали, что SVM Надо обучать сразу на большом объеме данных (или близком к нему). Это требует слишком много ресурсов. Отказываемся от SVM.
-
-```{r trainSVM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
-#View(dfTrain[importantFeatures])
-#summary (dfTrain[importantFeatures])
-
-######
-#e1071
-#быстрая, НО 1-поточная библиотека:(
-######
-# require(e1071)
-# system.time({
-#     set.seed(1234)
-#     ## выбираем значение для C
-#     objTune <- tune.svm(y ~ ., data = dfTrain [1:1000, importantFeatures2],
-#                    kernel="radial", 
-#                    type="nu-classification", #C-classification, nu-classification
-#                    cost=c( 1e-2, 1e-1, 1, 1e1),
-#                    gamma=c(1e-3, 0.01, 1/ncol(dfTrain), 0.1, 1, 10),
-#                    best.model=TRUE, #обучить и вернуть модель с лучшими параметрами
-#                    tunecontrol = tune.control(sampling="cross", cross=10)
-#                    )
-# })
-# #C-classification, 1000 строк, 3 min, err=0.241 (acc=76.9%)
-# #nu-classification, 1000 строк, 80 sec , err=0.232 (acc=76.9%)
-# summary(objTune)
-# #objTune
-# plot(objTune)
-# objTune$best.model
-#####
- 
-#inModelSelect <- createDataPartition(dfTrain$y, p = .5, list = FALSE, times = 1)
-inModelSelect <- 1:nrow(dfTrain) # Используем весь dfTrain
-#length(inModelSelect)
-system.time({          
-    set.seed(1234)
-    modSVM <- train (y ~ ., method="svmPoly", 
-                     #data = dfTrain [inModelSelect, importantFeatures1], # acc=0.49, In .local(x, ...) : Variable(s) `' constant. Cannot scale data.
-                     data = dfTrain [importantFeatures4],
-                     #data = dfTrainFull [importantFeatures2],                     
-    #                 preProcess= "pca", pcaComp=10,
-                     trControl = trainControl(method = "cv", number=10, repeats=5) # 5 повторов, т.к. это только выбор параметров
-                       ,tuneGrid = expand.grid(
-                             ##для svmLinear
-                             # C=c(1e-3, 1e-2,0.1, 1, 10) 
-                             ##для svmPoly
-                             degree = c(2,3,4),
-                             scale = c(1e-2, 1e-1, 1),
-                             C=c(1e-2,0.1, 0.3) 
-                             ##svmRadialCost
-                             #C=c(1e-3, 0.01,0.1, 1, 10, 1e2, 2e2, 3e2,350,400,450,500) 
-                             ##svmRadial
-                             #C=c(0.01,0.1, 1, 10),
-                             #sigma=c( 1e-3, 1e-2,1e-1)
-                          )
-#                     ,tuneLength=3
-    ) 
-})
-#svmLinear: 5000, 32 sec, acc= 73.5%
-#svmPoly: 5000, 8 min, acc= 74.38% 
-#         3700, 7 min, acc = 
-#         11255, IF2, cv=10 repeats, 45 min, acc = .55
-#         37502, IF2, cv=3 repeats,  min, acc = 
-#         37502, IF4, cv=5 repeats, >42 min, acc = 
-#svmRadialCost: acc=
-#svmRadial: 5000, ,acc= 74.2% ()
-
-ggplot (modSVM)
-
-# Теперь обучим финальную SVM модель с выбранными параметрами
-system.time({          
-    set.seed(1234)
-    #preSVN <- preProcess(dfTrainFull [importantFeatures2], method = "pca", thresh = .95) #all columns of x must be numeric
-    #dummyVars()
-    modSVM <- train (y ~ ., method="svmPoly", 
-                     #data = dfTrain [importantFeatures2],
-                     data = dfTrainFull [importantFeatures2],                     
-                     #preProcess= "pca", #параметры в trainControl
-                     trControl = trainControl(method = "cv", number=10, repeats=10
-                                              #,preProcOptions = list(thresh=0.99) #параметры pca
-                                              )
-                       ,tuneGrid = expand.grid(
-                             ##для svmLinear
-                             # C=c(1e-3, 1e-2,0.1, 1, 10) 
-                             ##для svmPoly
-                             degree = modSVM$bestTune$degree,
-                             scale = modSVM$bestTune$scale,
-                             C=modSVM$bestTune$C 
-                             ##svmRadialCost
-                             #C=c(1e-3, 0.01,0.1, 1, 10, 1e2, 2e2, 3e2,350,400,450,500) 
-                             ##svmRadial
-                             #C=c(0.01,0.1, 1, 10),
-                             #sigma=c( 1e-3, 1e-2,1e-1)
-                          )
-#                     ,tuneLength=3
-    ) 
-})
-modSVM
-# dfTrainFull, impF1, pcaThresh=.95, degree=2, scale=0.1, C=0.3 => final tuning parameters could not be determined
-# dfTrainFull, impF2, pcaThresh=.90, degree=2, scale=0.1, C=0.3 => 42 predictors (length of IF2), 10 min, acc=.57
-# dfTrainFull, impF2, pcaThresh=.99, degree=2, scale=0.1, C=0.3 =>  42 predictors,  17 min, acc= .587
-#modSVM$finalModel
-#summary(modSVM$finalModel)
-#plot(modSVM$finalModel)
-plot(modSVM)
-viSVM <- varImp(modSVM)
-viSVM
-viCols <- as.character(rownames(viSVM$importance))
-as.character(sapply(dfTrain[viCols],class))
-
-#paramSVM <- modSVM$finalModel@param$C # chosen C parameter
-acc <- modSVM$results[(modSVM$results$degree == modSVM$bestTune$degree) & 
-            (modSVM$results$scale == modSVM$bestTune$scale) &
-            (modSVM$results$C == modSVM$bestTune$C), "Accuracy"]    
-
-```
-
-Значимыми являеются не все параметры, некоторые из них категорийные.
-
-Проведем анализ сдвига/разброса модели SVM для *полной обучающей выборки* cо следующими параметрами:
-
-- degree = `r #modSVM$bestTune$degree`  
-- scale = `r #modSVM$bestTune$scale`   
-- С = `r #modSVM$bestTune$C`  
-
-```{r biasAndVarianceSVM, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
-#library(caret)
-#detach("package:RSNNS", unload=TRUE)
-system.time({
-    set.seed(1234)
-    res <- data.frame()
-    res <- foreach  (m = seq (ceiling(nrow(dfTrain)*0.5), nrow(dfTrain), length.out=learningCurvePoints), 
-                     .combine=rbind) %dopar% {    
-                         rows <- sample (1:nrow(dfTrain),m)    
-        mod <- caret::train (y ~ ., method="svmPoly", 
-                      data = dfTrain[importantFeatures1][rows, ],
-                      trControl = caret::trainControl(method = "cv", number=10, repeats=3),
-                      tuneGrid = data.frame(degree=modSVM$bestTune$degree,
-                                            scale=modSVM$bestTune$scale,
-                                            C=modSVM$bestTune$C))
-        accTrain <- caret::confusionMatrix(mod$finalModel@fitted, dfTrain$y[rows], positive="1")$overall[1]
-        predictions <- predict (mod, newdata = dfTest)
-        accTest <- caret::confusionMatrix(predictions,dfTest$y, positive="1")$overall[1]
-        #res <- rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-        rbind(res, data.frame(m=m, errorTrain = 1-accTrain, errorTest = 1-accTest))
-    }
-})
-
-ggplot(aes (x=m, y=value, colour=variable, shape=variable), data = melt (res, id="m")) + 
-    geom_line(size=1) + geom_point(size=5) +
-    xlab("Размер обучающей выборки (m)") + 
-    ylab ("Ошибка (1-Accuracy)") + ggtitle("Метод опорных векторов (SVM)")+
-    scale_colour_discrete(name="Выборка", labels=c("Обучающая", "Тестовая")) + 
-    scale_shape_discrete(name="Выборка", labels=c("Обучающая", "Тестовая"))
-
-dfResults  <- rbind(dfResults,
-                    data.frame (model="Support Vector Machine (svmPoly)", accuracy=acc,
-                                variance = "Высокий"))
-
-```
-
-?Из графика видим низкий уровень разброса модели, что хорошо, однако, уровень сдвига модели довольно высок и нестабилен, что плохо. 
-
-
-### Multi Layer Perceptron (RSNNS)
-
-```{r trainRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
-#View (dfTrain)
-
-maxIter <- 1500
-system.time({
-   set.seed(20151006)
-    modRSNNS <- train (y ~ ., method="mlp", #mlpWeightDecay
-                    data = dfTrain [importantFeatures3], #
-                    #data = dfTrain [importantFeatures1], # 51.75
-                    trControl = trainControl(method = "cv", number=10, repeats=10),
-                    maxit= maxIter, #nrow(dfTrain)*2,                    
-                    learnFunc= "BackpropMomentum", 
-                    #1) learning param (0.1:2), 2) momentum term (0:1), 
-                    #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
-                    #4) the maximum difference
-                    #see SNNS User Manual, pp. 67
-                    learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
-                    hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
-                    tuneGrid = expand.grid(
-                          size = c(6, 7, 8)
-                          )
-#                      tuneLength=4
-)}) 
-# 11255, IF1, maxIter=200, 6 min, erorrs, size=5, acc=49.76%
-# 11255, IF1, maxIter=500, 7 min, erorrs, size=7, acc=50.52%%
-# 11255, IF1, maxIter=1500, 8 min, erorrs, size=6, acc= 51.75%
-# 11255, IF3, maxIter=1500,  min, erorrs, size= , acc= %55.42%
-
-modRSNNS
-#modRSNNS$finalModel
-#summary(modRSNNS$finalModel)
-ggplot(modRSNNS)
-#par(mfrow=c(1,1))
-plotIterativeError(modRSNNS$finalModel)
-#modRSNNS$finalModel$IterativeFitError
-varImp(modRSNNS)
-
-# acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size) & 
-#             (modRSNNS$results$decay == modRSNNS$bestTune$decay), "Accuracy"]    
-acc <- modRSNNS$results[(modRSNNS$results$size == modRSNNS$bestTune$size), "Accuracy"]    
-
-```
-
-Последний график, показывает, что при увеличении количества итераций ошибка стремится к 0, т.е. модель склонна к переобучению. Ограничим число итераций по правилю "клюшки" 200 итерациями.
-
-Проведем анализ полноты обучения для полученной нейросети RSNNS с параметрами:
-
-- maxit = `r maxIter`.
-- learnFunc = BackpropMomentum.
-- learnFuncParams = c(0.1, 0.03, 0.1, 0.001).
-- hiddenActFunc = Act_TanH.
-- size = `r modRSNNS$bestTune$size`.
-
-```{r biasAndVarianceRSNNS, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
-# короткие
-myPlotLearningCurve (dfTrain, dfTest, method = "mlp", targetVariable = "y", 
-                     featuresList = importantFeatures1,
-                     learningCurvePoints = learningCurvePoints,
-                     tuneGrid = data.frame(
-                        size = modRSNNS$bestTune$size
-                        ),
-                     title = "Нейросеть RSNNS (mlp)",
-                     cvRepeats = 3,
-                     maxit = maxIter,                     
-                     learnFunc= "BackpropMomentum",
-                     #learning param 0.1:2, momentum term, flat spot elimination value, the maximum difference
-                     #see SNNS User Manual, pp. 67
-                     learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
-                     hiddenActFunc = "Act_TanH" 
-                     )
-
-detach("package:RSNNS", unload=TRUE)
-
-dfResults  <- rbind(dfResults,
-                    data.frame (model="Multi Layer Perceptron (RSNNS)", 
-                          accuracy=acc, variance = "?Высокий"))
-
-```
-
-Модель показывает неплохую точность на тестовой выборке, однако разброс довольно велик.
-
-
-
-### Нейросеть с 1 уровнем (nnet)
-
-Можно применить нейросеть с предварительным отбором параметров на основе метода главных компонент (pcaNNet), но мы уже отобрали наиборлее информативные параметры, поэтому используем обычную одноуровневую нейросеть (nnet).
-
-```{r trainNNET, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
-#View (dfTrain [, -c(1, which(nzv$nzv))])
-#pcaNNet=Neural Networks with Feature Extraction
-
-maxIter <- 1000
-system.time({
-    set.seed(20151004)
-    modNNET <- train (y ~ ., method="nnet", #nnet, pcaNNet
-                     #data = dfTrainFull [importantFeatures1], # 68.7
-                     #data = dfTrainFull [importantFeatures3], # 72,55
-                     data = dfTrainFull [importantFeatures4], # 72,89
-                     #data = dfTrain [allFeatures], #pcaNNet, 
-                     maxit = maxIter, #Макс
-                     trace=FALSE, # FALSE-для более быстрого рассчета
-                     #thrash=0.99, #для pcaNNet
-                     trControl = trainControl(method = "cv", number=10, repeats=10),
-                     tuneGrid = expand.grid(
-                          decay = c(1e-4, 1e-3, 1e-2), #1e-4, 1e-3, 0.1,0.33
-                          size = c(6, 7, 8, 9) # 7 выходных классов
-                     )
-#                      tuneLength=10
-    )
-}) 
-#nnet:
-#maxIter=100, IF2, train=11255, acc= 56.43% , 2 min
-#maxIter=100, IF1, train=11255, acc= 51.95% , 100 sec
-#maxIter=500, IF1, train=11255, acc= 61.0% , 7min (size=5, decay=0.001)
-#maxIter=500, IF1, train=37502, acc= 67.3% , 25min (size=8, decay=0.001)
-#maxIter=500, IF1, train=37502, acc= 68.7% , 25min (size=6, decay=0.0001)
-#maxIter=1000, IF3, train=37502, acc= 72.55% , 30 min (size= 9, decay=0.0001)
-#maxIter=1000, IF4, train=37502, acc= 72.89% , 15 min (size= 9, decay=0.0001)
-#maxIter=10 000, IF4, train=37502, acc= 73.13% , 53 min (size= 9, decay=0.0001)
-
-modNNET
-ggplot(modNNET)
-#modNNET$finalModel
-#summary(modNNET$finalModel)
-#varImp(modNNET)
-
-acc <- modNNET$results[(modNNET$results$size == modNNET$bestTune$size) & 
-                (modNNET$results$decay == modNNET$bestTune$decay), "Accuracy"]    
-
-```
-
-Проведем анализ полноты обучения для полученной нейросети nnet с параметрами:
-
-- maxit = **`r maxIter`**,
-- size = **`r modNNET$bestTune$size`**,
-- decay = **`r modNNET$bestTune$decay`**.
-
-```{r biasAndVarianceNNET, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
-
-#debugonce(myPlotLearningCurve)
-myPlotLearningCurve (dfTrainFull, dfTestFull, method = "nnet", targetVariable = "y", 
-                     featuresList = importantFeatures1,
-                     learningCurvePoints = learningCurvePoints,
-                     tuneGrid = data.frame(
-                        size = modNNET$bestTune$size,
-                        decay = modNNET$bestTune$decay
-                        ),
-                     title = "Нейросеть (nnet)",
-                     cvRepeats = 3)
-
-dfResults  <- rbind(dfResults,
-                    data.frame (model="Neural network (nnet)", 
-                          accuracy=acc, variance ="Низкий"))
-
-```
-
-
 
 ### Анализ качества обученных моделей
 
@@ -1110,7 +784,7 @@ myPredict.train <- function (object, newdata = NULL, type = "raw", na.action = n
 #modFinal <- modSVM
 #modFinal <- modLB #70,64% (полное обучение/тест)
 #modFinal <- modDT # 
-modFinal <- modRF # 73,8% (сокр обучение/тест)
+modFinal <- modRF # 75,92% (полное обучение/тестб CSMNR)
 #modFinal <- modGBM #
 #modFinal <- modRSNNS #
 #modFinal <- modNNET #
@@ -1135,11 +809,16 @@ cm
 
 ```{r predictNew, echo=FALSE, warning=FALSE, message = FALSE, eval=TRUE}
 
-dfFinalTest <- readRDS("../data/test_ConstMedianRange.rds")
+#dfFinalTest <- readRDS("../data/test_ConstMedianRange.rds")
+dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
+
+#table (dfTrainFull$y)
+#apply(dfFinalTest, 2, function(x)sum(is.na(x)))
 
 # для всех, кроме modLB (LogitBoost)
 predicted <- predict (modFinal, newdata = dfFinalTest)
 # # для LogitBoost
+# # LogitBoost дает предсказание NA, если два класса получили одинаковые голоса.
 # predicted <- myPredict.train (modLB, newdata = dfFinalTest, type = "prob") 
 # predicted$y <- apply(predicted,1, which.max) - 1
 # #View(predicted)
@@ -1153,10 +832,10 @@ predicted <- predict (modFinal, newdata = dfFinalTest)
 
 dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted,
                            stringsAsFactors = FALSE)
+#View(dfPredicted)
 
-#LogitBoost дает предсказание NA, если два класса получили одинаковые голоса.
 
-write.table(dfPredicted, "../data/151005_sol_CostMedianRange.csv", sep=",", quote=FALSE, row.names=FALSE)
+write.table(dfPredicted, "../data/151009_sol_CostSubstMedianRange.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 

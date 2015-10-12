@@ -114,6 +114,16 @@ myPlotFeatures <- function (
     }
 }
 
+## Заменяет все пустые значения (NA) в датафрейме df на значение value
+##
+##
+replaceNA <- function (df, value = "Не определено") {
+    for (col in colnames(df)){
+        df[col][is.na(df[col])] <- value
+    }
+    return (df)
+}
+
 
 ## Берет столбец и заменяем в нем все пустые значения (na.value) на одно из непустых значений из этого же столбца
 ## Вероятность получить новое значение пропорциональна его частоте в векторе
@@ -128,11 +138,15 @@ replaceNACategorical <- function (data, # dataframe, в котором надо 
         if (is.na(na.value)) {
             whichNA <- is.na(catFeature)
         } else {
-            whichNA <- catFeature == na.value    
+            whichNA <- (catFeature == na.value)
         }
-        catFeature[whichNA] <- sample(catFeature[!whichNA], size = sum(whichNA), replace = TRUE)
+        naCount <- sum(whichNA)
+        if (naCount > 0) {
+            catFeature[whichNA] <- sample(catFeature[!whichNA], size = naCount, replace = TRUE)
+        }
         return(catFeature)
     }
+    #debugonce(replaceNACategoricalCol)
     # результат
     as.data.frame(apply(data, 2, function(x){replaceNACategoricalCol(x, na.value)}),
                   stringsAsFactors = TRUE)
