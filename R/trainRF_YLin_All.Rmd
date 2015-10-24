@@ -23,7 +23,6 @@ require(reshape2) #melt
 require(rpart)
 require(ROCR) #myPlotROC()
 require (plyr); require(dplyr) #чтобы загружались именно в таком порядке
-require (ROSE)
 
 eval(parse('common.R',encoding = "UTF-8"))
 
@@ -91,11 +90,96 @@ dfTrainFull <- dfTrainAll[inTrainFull,]
 
 - Полная тестовая: `r nrow(dfTestFull)` экземпляров.
 
+### Предсказание редких категорий
+
+Все построенные до сих пор модели плохо предсказывают возрастные группы 0 и 1. Вероятно, это связано с тем, что в обучающей выборке мало примеров абонентов  из указанных возрастных групп. Проведем теоретически сомнительный эксперимент: "размножим" данные примеров абонентов редких групп таким образом, чтобы количество примеров для абонентов каждой возрастной грпуппы было примерно одинаковым.
+
+```{r predictRareAgeGroup, eval = FALSE}
+dfTrainExt<-dfTrainFull
+tab <- table(dfTrainFull$y)
+tab
+
+#str(table(dfTrainFull$y))
+ratio <- floor(max(tab)/tab)
+ratio
+#class<-0
+#ratio[class+1]
+for (class in 0:6){
+    dfSlice <- dfTrainFull[dfTrainFull$y == class,] # данные для категории (возрастная группа) class
+    if(ratio[class+1] == 1) next
+    for (i in 1:(ratio[class+1]-1)){ # повторяем данные
+        dfTrainExt <- rbind(dfTrainExt, dfSlice)
+    }    
+}
+table (dfTrainExt$y)
+
+
+```
+
+Бесполезный эксперимент.
+
+Построим отдельную модель, которая будет предсказывать только возрастную группу "0/не 0". Случайный лес делает это плохо.
+
+```{r trainRF0, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+dfTrainFull0 <- dfTrainFull
+dfTrainFull0$y0 <- as.factor(dfTrainFull0$y==0)
+#View(dfTrainFull0)
+colFeaturesY0 <- setdiff(colnames(dfTrainFull0), c("y"))
+
+nTree <- 20 #500
+
+system.time({
+    set.seed(1234)
+    modSVM0 <- train (y0 ~ ., method="svmRadial", 
+                    #data = dfTrainFull [importantFeatures1], #
+                    #data = dfTrain [importantFeatures2], #
+                    data = dfTrainFull0[colFeaturesY0], # 
+                    metric = "ROC",
+                    trControl = trainControl(method = "cv", number=10, repeats=5, 
+                                             summaryFunction=twoClassSummary, classProbs=TRUE),
+                    #количество деревьев в лесу.
+                    #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
+                    #ntree= nTree, 
+#                     tuneGrid = expand.grid(mtry=c(
+#                         #ceiling(sqrt(nPredictors)/5),
+#                         #ceiling(sqrt(nPredictors)/4),
+# #                         ceiling(sqrt(nPredictors)/3),
+# #                         ceiling(sqrt(nPredictors)/2),
+# #                         ceiling(sqrt(nPredictors)),
+# #                         ceiling(sqrt(nPredictors))*2
+# #                         , ceiling(nPredictors/3)
+# #                         , ceiling(nPredictors/2)
+# #                         , ceiling(nPredictors*2/3)
+# #                         , nPredictors
+#                         9, 11, 15, 19,  41 
+#                         ))
+                    tuneLength=3
+    )
+}) # 
+modSVM0
+ggplot(modRF0) # пказывает, что достаточно 50 деревьев
+#modRF$finalModel
+plot(modRF0$finalModel)
+vi <- varImp(modRF0)
+vi <- vi$importance 
+vi$varName <-  modRF0$coefnames
+
+viTop <- vi %>% arrange(desc(Overall)) %>% 
+    top_n(20, Overall) 
+viTop
+
+
+acc <- modRF$results$Accuracy[as.numeric(rownames(modRF$bestTune)[1])]
+
+paramRF <- modRF$bestTune$mtry
+```
+
+
 
 ### Регрессия возраста
 
 Представим возраст целым числом и попробуем построить регрессиию.
-```{r addAgeFeature, echo=FALSE, eval=TRUE}
+```{r addAgeFeature, echo=FALSE, eval=FALSE}
 dfTrainAll$yLin <- as.numeric(dfTrainAll$y)
 dfTrainFull$yLin <- as.numeric(dfTrainFull$y)
 dfTrain$yLin <- as.numeric(dfTrain$y)
@@ -112,8 +196,7 @@ colFeaturesYLin3 <- c("yLin",setdiff(importantFeatures3, "y")) # убираем 
 system.time({
     set.seed(1234)
     modGLMBoost <- train (yLin ~ ., method="glmboost", 
-                    data = dfTrainAll[colFeaturesYLin3], # для финального рассчета
-                    #data = dfTrainFull[colFeaturesYLin3], # для отладки - чтобы смотреть на точность предсказания
+                    data = dfTrainFull[colFeaturesYLin3], # 
                     trControl = trainControl(method = "cv", number=10, repeats=5)
                     #количество деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
@@ -176,7 +259,6 @@ qplot (x=predicted, y = dfTrainFull$y)
 ```
 
 Обновим тренировочные и тестовые датафреймы *предсказанными* линейными значениями возраста.
-
 ```{r updateDataAgeLinear, echo=FALSE}
 dfTrainFull$yLin <- predict (modGLMBoost, newdata = dfTrainFull)
 dfTrain$yLin <- predict (modGLMBoost, newdata = dfTrain)
@@ -184,195 +266,14 @@ dfTestFull$yLin <- predict (modGLMBoost, newdata = dfTestFull)
 dfTest$yLin <- predict (modGLMBoost, newdata = dfTest)
 dfTrainAll$yLin <- predict (modGLMBoost, newdata = dfTrainAll)
 
+# dfTrainFull$yLin <- predict (modRFLin, newdata = dfTrainFull)
+# dfTrain$yLin <- predict (modRFLin, newdata = dfTrain)
+# dfTestFull$yLin <- predict (modRFLin, newdata = dfTestFull)
+# dfTest$yLin <- predict (modRFLin, newdata = dfTest)
+
 ```
 
 Обе рассмотренные модели (линейная и случайный лес) не очень хорошо предсказывают возраст. Обе склонны "завышать" возраст для возрастных групп 0 и 1. Построенные на основе обогащенных предсказаниями этих моделей модели Случйный лес и RSNNS дают точность ~69%.
-
-### Предсказание редких категорий
-
-?oversampling Все построенные до сих пор модели плохо предсказывают возрастные группы 0 и 1. Вероятно, это связано с тем, что в обучающей выборке мало примеров абонентов  из указанных возрастных групп. Проведем теоретически сомнительный эксперимент: "размножим" данные примеров абонентов редких групп таким образом, чтобы количество примеров для абонентов каждой возрастной грпуппы было примерно одинаковым.
-
-
-Построим отдельную модель, которая будет предсказывать только возрастную группу "0/не 0". Случайный лес делает это плохо.
-
-```{r trainMod0, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
-dfTrainFull$y0 <- as.factor(ifelse(dfTrainFull$y==0, 1, 0))
-dfTrainFull$y1 <- as.factor(ifelse(dfTrainFull$y==1, 1, 0))
-#View(dfTrainFull0)
-
-#dfTrain0 <- dfTrain
-dfTrain$y0 <- as.factor(ifelse(dfTrain$y==0, 1, 0))
-dfTrain$y1 <- as.factor(ifelse(dfTrain$y==1, 1, 0))
-
-#dfTrainExt$y0 <- as.factor(ifelse(dfTrainExt$y == 0, 1, 0))
-
-#исключаем yLin из иптиска параметров, чтобы не было "зацикливания" на предсказанных линейной моделью значеий
-# таким образом по сути строим ансамбль моделей: Линейная, SVM и тп.
-colFeaturesY0 <- c("y0",setdiff(colnames(dfTrainFull), c("y", "yLin","y1")))
-colFeaturesY0 <- c("y1",setdiff(colnames(dfTrainFull), c("y", "yLin", "y0"))) 
-importantFeatures1Y0 <- c("y0",setdiff(importantFeatures1, c("y", "yLin","y1"))) 
-#table(dfTrain0$y0)
-#table(dfTest$y==0)
-
-
-########
-# varImp(modGLMBoost)
-#     Overall
-# x30 100.000
-# x8   70.116
-# x56  49.949
-# x35  38.077
-# x59  29.851
-# x23  23.535
-# x43  22.155
-# x44  20.151
-# x58  20.078
-# x60  19.990
-# x32  18.655
-# x39  15.333
-# x29  12.335
-# x42  11.345
-# x41  11.328
-# x31  10.599
-# x55   9.187
-# x40   8.682
-# x13   8.272
-# x36   6.182
-
-#LogitBoost на dfTrainExt[colFeaturesY0]
-#     Importance
-# x57     100.00
-# x56      97.23
-# x37      95.32
-# x30      91.68
-# x53      90.57
-# x23      87.85
-# x38      85.80
-# x24      84.80
-# x54      83.35
-# x25      83.09
-# x26      80.61
-# x32      79.22
-# x36      76.69
-# x33      75.62
-# x59      74.86
-# x40      74.25
-# x13      73.05
-# x61      72.62
-# x28      72.49
-# x39      71.20
-######
-
-table(dfTrainFull$y0)
-dfTrainFullBalanced0 <- ovun.sample(y0 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced0$y0)
-
-    system.time({
-        set.seed(1234)
-        mod0 <- train (y0~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
-                       #method="rf", #BalancedAccuracy = .50
-                       ## Boosting methods
-                        #method="LogitBoost", #BalancedAccuracy = .67
-                        #method="glmboost", #final tuning parameters could not be determined
-                        #method="ada", # final tuning parameters could not be determined
-                        #method="AdaBoost.M1", # долго!!!
-                       ## Cost-sensitive methods
-                        method = "C5.0Cost",# меньше столбцов!, Balanced Accuracy = 0,52
-                        #data = dfTrain0 [importantFeatures1Y0], #
-                        #data = dfTrain0 [c(rows0,rowsNot0Sample), colFeaturesY0], #
-                        #data = dfTrainFull0[colFeaturesY0], #
-                        #data = dfTrainExt[importantFeatures1Y0], #
-                        data = dfTrainFullBalanced0, #
-                        trControl = trainControl(method = "cv", number=10, repeats=3),
-                       ## LogitBoost
-                        #tuneGrid = data.frame(nIter=c(31))
-                       ##C5.0Cost
-                        tuneGrid = expand.grid(trials=c(10),
-                                               model="tree",
-                                               winnow=FALSE,
-                                               cost=c(100)
-                           )
-    #                     tuneLength=3
-        )
-    }) # 
-    
-    mod0
-summary(mod0)
-ggplot(mod0)
-varImp(mod0)
-
-vi <- varImp(mod0)
-vi <- vi$importance 
-vi$varName <-  mod0$coefnames
-viTop <- vi %>% arrange(desc(Overall)) %>% 
-    top_n(20, Overall) 
-viTop
-
-caret::confusionMatrix(data = predict(mod0, newdata = dfTrainFullBalanced0), 
-                             reference = dfTrainFullBalanced0$y0,
-                             positive="1")
-
-
-predictedTest <- predict (mod0, newdata = dfTestFull)
-table(predictedTest)
-caret::confusionMatrix(data = predictedTest, 
-                             reference = as.factor(ifelse(dfTestFull$y==0,1,0)),
-                             positive="1")
-
-dfTrainFull$y0 <- predict(mod0, newdata=dfTrainFull)
-dfTestFull$y0 <- predictedTest
-
-```
-
-Построим модель, предсказывающую козрастную группу 1.
-
-```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
-
-
-table(dfTrainFull$y1)
-dfTrainFullBalanced1 <- ovun.sample(y1 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced1$y1)
-
-system.time({
-    set.seed(1234)
-    mod1 <- train (y1~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
-                   ## Cost-sensitive methods
-                    method = "C5.0Cost",# меньше столбцов!
-                    #data = dfTrainFull0[colFeaturesY0], #
-                    #data = dfTrainExt[importantFeatures1Y0], #
-                    data = dfTrainFullBalanced1, #
-                    trControl = trainControl(method = "cv", number=10, repeats=3),
-                   ##C5.0Cost
-                    tuneGrid = expand.grid(trials=c(10), #50 - хуже
-                                           model="tree",
-                                           winnow=FALSE,
-                                           cost=c(100)
-                       )
-#                     tuneLength=3
-    )
-}) # 
-
-#mod1 
-#summary(mod1)
-#ggplot(mod1)
-#varImp(mod1)
-
-caret::confusionMatrix(data = predict(mod1, newdata = dfTrainFullBalanced1), 
-                             reference = dfTrainFullBalanced1$y1,
-                             positive="1")
-
-
-predictedTest <- predict (mod1, newdata = dfTestFull)
-#table(predictedTest)
-caret::confusionMatrix(data = predictedTest, 
-                             reference = as.factor(ifelse(dfTestFull$y==1,1,0)),
-                             positive="1")
-
-dfTrainFull$y1 <- predict(mod1, newdata=dfTrainFull)
-dfTestFull$y1 <- predictedTest
-
-```
-
 
 ### Случайный лес (Random Forest, rf)
 
@@ -400,8 +301,8 @@ system.time({
     set.seed(1234)
     modRF <- train (y ~ ., method="rf", 
                     #data = dfTrainFull [importantFeatures1], #
-                    #data = dfTrainAll, # финальный
-                    data = dfTrainFull, # 
+                    data = dfTrainAll, #
+                    #data = dfTrainFull, # 
                     trControl = trainControl(method = "cv", number=10, repeats=5),
                     #количество деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
@@ -417,7 +318,7 @@ system.time({
 #                         , ceiling(nPredictors/2)
 #                         , ceiling(nPredictors*2/3)
 #                         , nPredictors
-                        21, 35, 37, 39, 41, 43, 45, 70
+                        9, 21, 35, 37, 39, 41, 43, 80
                         ))
 #                    tuneLength=3
     )
@@ -431,7 +332,7 @@ vi <- vi$importance
 vi$varName <-  modRF$coefnames
 
 viTop <- vi %>% arrange(desc(Overall)) %>% 
-    top_n(200, Overall) 
+    top_n(20, Overall) 
 viTop
 
 
@@ -863,8 +764,6 @@ dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
 
 # предсказываем дополнительный параметр
 dfFinalTest$yLin <- predict (modGLMBoost, newdata = dfFinalTest)
-dfFinalTest$y0 <- predict (mod0, newdata = dfFinalTest)
-dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
 
 #table (dfTrainFull$y)
 #apply(dfFinalTest, 2, function(x)sum(is.na(x)))
@@ -885,14 +784,13 @@ predicted <- predict (modFinal, newdata = dfFinalTest)
 #12.10.15 - RF на CSMNR, полн 100% = 75.73%
 #12.10.15 - RF на CSMNR+yLin, полн 100% = 75.77%
 #20.10.15 - RF на CSMNR+yLin, все данные тренировочные (50к) = 75.95%
-#24.10.15 - RF на CSMNR+yLin+y0, все данные тренировочные (50к) = 76.14%
-#24.10.15 - RF на CSMNR+yLin+y01, все данные тренировочные (50к) = 74.75% !!!
 
-dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted, stringsAsFactors = FALSE)
+dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted,
+                           stringsAsFactors = FALSE)
 #View(dfPredicted)
 
 
-write.table(dfPredicted, "../data/151009_sol_CostSubstMedianRange_yLin_y01_All.csv", sep=",", quote=FALSE, row.names=FALSE)
+write.table(dfPredicted, "../data/151009_sol_CostSubstMedianRange_yLin_All.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 

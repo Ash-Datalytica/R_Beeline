@@ -1,0 +1,339 @@
+---
+title: "Обучение моделей типа Random Forest"
+author: "Alexey Shovkun"
+date: "29 сентября 2015 г."
+output: html_document
+---
+
+
+```{r init, echo=FALSE, message=FALSE}
+#install.packages("rpart")
+#install.packages("ROCR")
+#require (data.table)
+require(caret) #dummyVars, featurePlot
+#require(AppliedPredictiveModeling) #transparentTheme
+#require(Hmisc) #cut2
+#require(mice)
+require(parallel) #detectCores()
+require(doSNOW)
+require (ggplot2)
+require(gridExtra)
+require(rattle) #fancyRpartPlot
+require(reshape2) #melt
+require(rpart)
+require(ROCR) #myPlotROC()
+require (plyr); require(dplyr) #чтобы загружались именно в таком порядке
+
+eval(parse('common.R',encoding = "UTF-8"))
+
+nCores <- detectCores() 
+#nCores <- 6
+cl<-makeCluster(nCores - 1) # оставляем одно ядро на инфраструктуру и параллельные процессы
+registerDoSNOW(cl) # Register the cores.
+
+
+#learningCurvePoints <- ifelse (nCores < 11, 10, nCores-1) # Кол-во точек (моделей) для построения кривой обучения
+learningCurvePoints <- 8
+dfResults <- NULL
+#Sys.getlocale() #en_US.UTF-8
+#Sys.setlocale("LC_ALL", "ru_RU.UTF-8")
+#sessionInfo()
+trellis.par.set(caretTheme())
+
+
+# загружаем списки параметров importantfeaturesN
+load ("../data/features.rds")
+```
+
+
+
+Выделяем обучающую и тестовую выборки. Проверку качества модели в процессе подбора её параметров будем делать с использованием метода перекрестной проверки (cross validation) на обучающей выборке. Тестовая выборка будет использована **только** для оценки качества результирующей модели.
+Если использовать всю обучающую выборку для выбора модели, то уходит очень много времени на рассчеты. Поэтому *выбор* модели будем делать на 20% от всех обучающих данных. Если при оценке какой-то модели окажется, что ее можно улучшить, увеличив размер обучающей выборки, то у нас будет такая возможность!
+
+```{r makeSets, echo=FALSE, warning=FALSE, message = FALSE}
+set.seed(20150415)
+#dfTrainFull <- readRDS("../data/train_ConstMedianRange.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ConstMedianSelectedSure.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianRange.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianYeoJohnsonRange.rds")
+#dfTrainFull <- readRDS("../data/train_ValueMedianSelectedSure.rds")
+dfTrainFull <- readRDS("../data/train_ConstSubstMedianRange.rds") # Длинные категорийные заменены на ниболее вероятный класс
+#dfTrainFull <- readRDS("../data/train_ConstSubstMedianYeoJohnsonRange.rds") # 
+#dfTrainFull <- readRDS("../data/train_ConstSubstMedianSelectedSure.rds") # 
+#class(dfTrainFull[,1]) #factor
+str(dfTrainFull)
+
+## сокращаем объем исследуемых данных.
+inSelection <- createDataPartition(dfTrainFull$y, p = .3, list = FALSE, times = 1)
+dfTrain <- dfTrainFull[inSelection,]
+inTrain <- createDataPartition(dfTrain$y, p = .75, list = FALSE, times = 1)
+dfTest <- dfTrain[-inTrain,]
+dfTrain <- dfTrain[inTrain,]
+#summary(dfTrain)
+
+# полный объем данных
+inTrainFull <- createDataPartition(dfTrainFull$y, p = .75, list = FALSE, times = 1)
+dfTestFull <- dfTrainFull[-inTrainFull,]
+dfTrainFull <- dfTrainFull[inTrainFull,]
+```
+
+Размеры выборок: 
+    
+- Сокращенная обучающая: `r nrow(dfTrain)` экземпляров.
+
+- проверочная: отсутствует, т.к. применяем кросс-валидацию.
+
+- Сокращенная тестовая: `r nrow(dfTest)` экземпляров.
+
+- Полная обучающая: `r nrow(dfTrainFull)` экземпляров.
+
+- Полная тестовая: `r nrow(dfTestFull)` экземпляров.
+
+
+
+### Случайный лес (Random Forest, rf)
+
+Посмотрим, как влияет нормализация на работу RF.
+
+```
+ DataType  Size   Feat nTree Time  mtry   Acc
+ CMNR      37502, IF1, 100    8m,           75.1% ??
+ CMNR      37502, IF1, 100    12m,  39      74.82%
+ CMYJR     37502, IF1, 100    12m,  41      74,77%
+ CMSS      37502, IF1, 100    22s!! 39      72.83%
+ CVNR      37502, IF1, 100    12m,  43      74.69%, - нет разницы с CMNR, т.к. наиболее значимые переменные - числовые.
+ CVYJR     37502, IF1, 100    11m,  39      74,64%  - нет разницы с CMYJR, т.к. наиболее значимые переменные - числовые.
+ VMSS      37502, IF1, 100    20s!! 43      72.87%  - --//--
+ VMSS      37502, IF1, 100    20s!! 43      72.87%  - --//--
+ CSMNR     37502, все, 100    17m   81      75.26%
+ CSMYJR    37502, все, 100    18m   81      75.25%
+ CSMSS     37502, все, 100    31s   81      72.50%   
+```
+
+```{r trainRandomForest, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#View (dfTrain[importantFeatures])
+#str(dfTrain[importantFeatures])
+#importantFeatures1 - все
+#importantFeatures2 - кроме длинных категорийных
+nPredictors = length(importantFeatures1) - 1 # из-за y
+#nPredictors = length(allFeatures)#ncol(dfTrain)-1
+
+nTree <- 100 #500
+# = 50 -  11255, IF1,      , acc= 74.8%
+# = 100 - 37502, IF1, 8 min,  acc= 75.1%
+# = 500 - 25 min - ошибка
+
+system.time({
+    set.seed(1234)
+    modRF <- train (y ~ ., method="rf", 
+                    #data = dfTrainFull [importantFeatures1], #
+                    #data = dfTrain [importantFeatures2], #
+                    data = dfTrainFull, # 
+                    trControl = trainControl(method = "cv", number=10, repeats=5),
+                    #количество деревьев в лесу.
+                    #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
+                    ntree= nTree, 
+                    tuneGrid = expand.grid(mtry=c(
+                        #ceiling(sqrt(nPredictors)/5),
+                        #ceiling(sqrt(nPredictors)/4),
+#                         ceiling(sqrt(nPredictors)/3),
+#                         ceiling(sqrt(nPredictors)/2),
+#                         ceiling(sqrt(nPredictors)),
+#                         ceiling(sqrt(nPredictors))*2
+#                         , ceiling(nPredictors/3)
+#                         , ceiling(nPredictors/2)
+#                         , ceiling(nPredictors*2/3)
+#                         , nPredictors
+                        11,13,15,17,19, 21, 23, 39, 41, 43, 81
+                        ))
+#                    tuneLength=3
+    )
+}) # 
+modRF
+ggplot(modRF) # пказывает, что достаточно 50 деревьев
+#modRF$finalModel
+plot(modRF$finalModel)
+#varImp(modRF)
+acc <- modRF$results$Accuracy[as.numeric(rownames(modRF$bestTune)[1])]
+
+paramRF <- modRF$bestTune$mtry
+```
+
+?Случайный лес показывает несколько меньшую точность по сравнению с деревом решений, поскольку он содержит усредненную оценку от **`r nTree`** деревьев. Зато менее вероятно, что эта модель переообучена, т.е. мы ожидаем, что она с большей вероятностью будет показывать такую же точность на новых данных по сравнению с деревом решений.
+
+
+
+Проведем анализ сдвига/разброса на основе Случайного леса c параметром mtry =**`r paramRF`** на сокращенной выборке.
+```{r biasAndVarianceRF, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+# на сокращенных данных
+myPlotLearningCurve (dfTrain, dfTest, method = "rf", targetVariable = "y", 
+                     featuresList = colnames(dfTrain),
+                     learningCurvePoints = learningCurvePoints,
+                     tuneGrid = data.frame(
+                                            mtry=modRF$bestTune$mtry
+                                            ),
+                     title = "Random Forest",
+                     cvRepeats = 3,
+                     ntree = nTree)
+#69 min на полной (37к)
+
+dfResults  <- rbind(dfResults,
+                    data.frame (model="Random Forest", 
+                          accuracy = acc, variance="?Очень высокий"))
+
+```
+
+?При nTree=50 график показывает, что обучающая ошибка постоянно равна 0, а тестовая ~ 25%. Это означает, что модель переобучена (имеет высокий разброс) и сдвинута (имеет высокий сдвиг). При nTree = 100 график показывает то же самое.
+
+Чтобы побороть проблему переобучения, можно применть следующее:
+
+ - регуляризация (см. далее),
+ - уменьшить количество деревьев,
+ - попробовать на полной обучающей выборке,
+ - метод bagging,
+ - больше данных,
+ - сокращение (отбор) параметров.
+
+Поскольку данная модель показывает адекватные результаты, выделим параметры абонента, которые для нее оказались важными. Будем использовать этот набор параметров в случаях, когда другие модели будут показывать высокий разброс.
+
+
+
+
+### Анализ качества обученных моделей
+
+```{r results, echo=FALSE, warning=FALSE, message = FALSE}
+dfResults
+```
+
+
+
+### Проверка лучшей модели на тестовой выборке 
+ 
+В качестве победившей по качеству предсказания на обучающих данных выбираем модель "Случайный лес (rf) ". Оценим качество ее предсказания на тестовой выборке, которую модель не "видела" при обучении.
+ 
+```{r checkAccuracy, echo=FALSE, warning=FALSE, message = FALSE}
+# делаем свою функцию, чтобы исправить баг библиотеки caret 6.0-41
+myPredict.train <- function (object, newdata = NULL, type = "raw", na.action = na.omit, 
+    ...) 
+{
+    if (all(names(object) != "modelInfo")) {
+        object <- update(object, param = NULL)
+    }
+    if (!is.null(object$modelInfo$library)) 
+        for (i in object$modelInfo$library) do.call("require", 
+            list(package = i))
+    if (!(type %in% c("raw", "prob"))) 
+        stop("type must be either \"raw\" or \"prob\"")
+    if (type == "prob") {
+        if (is.null(object$modelInfo$prob)) 
+            stop("only classification models that produce probabilities are allowed")
+    }
+    if (!is.null(newdata)) {
+        if (inherits(object, "train.formula")) {
+            newdata <- as.data.frame(newdata)
+            rn <- row.names(newdata)
+            Terms <- delete.response(object$terms)
+            m <- model.frame(Terms, newdata, na.action = na.action, 
+                xlev = object$xlevels)
+            if (!is.null(cl <- attr(Terms, "dataClasses"))) 
+                .checkMFClasses(cl, m)
+            keep <- match(row.names(m), rn)
+            newdata <- model.matrix(Terms, m, contrasts = object$contrasts)
+            xint <- match("(Intercept)", colnames(newdata), nomatch = 0)
+            if (xint > 0) 
+                newdata <- newdata[, -xint, drop = FALSE]
+        }
+    }
+    else {
+        if (!is.null(object$trainingData)) {
+            newdata <- if (object$method == "pam") 
+                object$finalModel$xData
+            else object$trainingData
+        }
+        else stop("please specify data via newdata")
+    }
+    if (type == "prob") {
+        out <- extractProb(list(object), unkX = newdata, unkOnly = TRUE, 
+            ...)
+        obsLevels <- levels(object)
+        out <- out[, paste0("X", obsLevels), drop = FALSE]
+    }
+    else {
+        out <- extractPrediction(list(object), unkX = newdata, 
+            unkOnly = TRUE, ...)$pred
+    }
+    out
+}
+
+#modFinal <- modGLMBoost #
+#modFinal <- modSVM
+#modFinal <- modLB #70,64% (полное обучение/тест)
+#modFinal <- modDT # 
+modFinal <- modRF # 75,92% (полное обучение/тестб CSMNR)
+#modFinal <- modGBM #
+#modFinal <- modRSNNS #
+#modFinal <- modNNET #
+#modFinal <- modGLMBoost # 71% на importantFeatures2, 75% на allFeatures
+#debugonce(predict)
+#predict(modFinal, newdata=dfTest, type="prob")
+
+# Для всех, кроме modLB:
+predTest <- predict(modFinal, newdata=dfTestFull) 
+# # для modLB:
+# predTest <- myPredict.train(modFinal, newdata=dfTestFull, type = "prob") 
+# predTest <- (apply(predTest,1, which.max) - 1)
+# predTest <- as.factor(predTest)
+
+cm <- caret::confusionMatrix(data = predTest, reference = dfTestFull$y,
+                             positive= "1")
+accFinal <- cm$overal[1]
+cm
+```
+
+## Предсказние новых 
+
+```{r predictNew, echo=FALSE, warning=FALSE, message = FALSE, eval=TRUE}
+
+#dfFinalTest <- readRDS("../data/test_ConstMedianRange.rds")
+dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
+
+#table (dfTrainFull$y)
+#apply(dfFinalTest, 2, function(x)sum(is.na(x)))
+
+# для всех, кроме modLB (LogitBoost)
+predicted <- predict (modFinal, newdata = dfFinalTest)
+# # для LogitBoost
+# # LogitBoost дает предсказание NA, если два класса получили одинаковые голоса.
+# predicted <- myPredict.train (modLB, newdata = dfFinalTest, type = "prob") 
+# predicted$y <- apply(predicted,1, which.max) - 1
+# #View(predicted)
+# predicted <- as.factor(predicted$y)
+
+
+
+#03.10.15 - RF, сокр 30% = 74.91%
+#05.10.15 - LogitBoost, полн 100% = 70.81%
+#12.10.15 - RF на CSMNR, полн 100% = 75.73%
+
+
+dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted,
+                           stringsAsFactors = FALSE)
+#View(dfPredicted)
+
+
+write.table(dfPredicted, "../data/151009_sol_CostSubstMedianRange.csv", sep=",", quote=FALSE, row.names=FALSE)
+```
+
+
+Результаты публикации:
+
+ - для модели Случайный лес (rf) точность оказалась **74.91%**. Показатель невысокий, однако это первая публикация и она показала, что применяемый для выбора модели подход для оценки точности предстказания работает хорошо - в реальности точность оказалась даже чуть лучше, чем ожидалось.  
+ - для модели (LogitBoost) точность оказалась **70.81%**. Низкая точность обусловлена спефикой модели (NA в предсказанных классах).  - для модели случайный лес на данных CSMNR (NA в категориях заменены на константу, категории в длинных переменных (> 5 категорий) заменены на наиболее вероятный для них класс, NA в новых категориях тестового примера также заменены на константу, числовые переменные преобразованы линейно в диапазон [0,1] ) точность оказалась **75.73**
+ 
+ 
+
+```{r stopCluster, echo=FALSE, warning=FALSE, message = FALSE, cache=FALSE}
+stopCluster(cl) # Explicitly free up cores again.
+
+```
