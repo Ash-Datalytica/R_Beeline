@@ -18,7 +18,7 @@ require(caret) #dummyVars, featurePlot
 require(parallel) #detectCores()
 require(doSNOW)
 require (ggplot2)
-require(gridECxtra)
+require(gridExtra)
 require(rattle) #fancyRpartPlot
 require(reshape2) #melt
 require(rpart)
@@ -443,7 +443,7 @@ dfTrainAll$y1 <- predict(mod1, newdata=dfTrainAll)
 
 Следующие по величине ошибки возрастные группы №6, №5 и №4. В следующих версиях сосредоточимся на них.
 
-```{r trainMod6, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+```{r trainMod6, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
 
 
 table(dfTrainFull$y6)
