@@ -329,7 +329,7 @@ dfTrainAll$y0 <- predict(mod0, newdata=dfTrainAll)
 
 Первая матрица неточностей показывает, что модель предсказывает всех пользователей из возрастной группы 0 (class=1) (FN=0) и при этом имеет неплохую Balanced Accuracy=99.31% на обучающих данных. Вторая матрица неточностей построена для тестовых данных и показывает Balanced Accuracy =55.84%. В идеале хотелось бы иметь на тестовых данных также FN=0 и более высокую BA. 
 
-Построим модель, предсказывающую возрастную группу 1.
+Построим модель, предсказывающую возрастную группу 1. Лучше всего конечный результат при C=1, но все равно он хуже, чем без этой модели. Пока не будем ее использовать. Возможно, стоит попробовать другой тип можели для более сильной классификации, например, 2-class SVM.
 
 ```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
 
@@ -440,6 +440,8 @@ dfTestFull$y1 <- predictedTest
 dfTrainAll$y1 <- predict(mod1, newdata=dfTrainAll)
 
 ```
+
+Следующие по величине ошибки возрастные группы №6, №5 и №4. В следующих версиях сосредоточимся на них.
 
 ```{r trainMod6, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
 
@@ -689,7 +691,7 @@ dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
 # предсказываем дополнительный параметр
 dfFinalTest$yLin <- predict (modGLMBoost, newdata = dfFinalTest)
 dfFinalTest$y0 <- predict (mod0, newdata = dfFinalTest)
-dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
+#dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
 
 #table (dfTrainFull$y)
 #apply(dfFinalTest, 2, function(x)sum(is.na(x)))
@@ -717,7 +719,7 @@ dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted, stringsAsFactors 
 #View(dfPredicted)
 
 
-write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y01_All.csv", sep=",", quote=FALSE, row.names=FALSE)
+write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y0_All.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 
