@@ -15,6 +15,10 @@ R/.RData
 # RStudio files
 .Rproj.user/
 
+# Временные файлы
+documentation/~*
+documentation/*.tmp
+
 # =========================
 # Operating System Files
 # =========================
