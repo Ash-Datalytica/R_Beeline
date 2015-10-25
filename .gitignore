@@ -5,8 +5,7 @@
 *-Ex.R
 
 # R data files from past sessions
-*.RData
-R/.RData
+/R/.RData
 R/*.RData
 
 # R cache files
