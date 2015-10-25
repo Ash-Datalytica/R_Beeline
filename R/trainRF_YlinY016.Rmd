@@ -331,7 +331,7 @@ dfTrainAll$y0 <- predict(mod0, newdata=dfTrainAll)
 
 Построим модель, предсказывающую возрастную группу 1. Лучше всего конечный результат при C=1, но все равно он хуже, чем без этой модели. Пока не будем ее использовать. Возможно, стоит попробовать другой тип можели для более сильной классификации, например, 2-class SVM.
 
-```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
 
 
 table(dfTrainFull$y1)
@@ -690,7 +690,7 @@ dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
 # предсказываем дополнительный параметр
 dfFinalTest$yLin <- predict (modGLMBoost, newdata = dfFinalTest)
 dfFinalTest$y0 <- predict (mod0, newdata = dfFinalTest)
-#dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
+dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
 dfFinalTest$y6 <- predict (mod6, newdata = dfFinalTest)
 
 #table (dfTrainFull$y)
@@ -715,12 +715,13 @@ predicted <- predict (modFinal, newdata = dfFinalTest)
 #24.10.15 - RF на CSMNR+yLin+y0, nTree=50, все данные тренировочные (50к) = 75.76% => nTree важен!
 #24.10.15 - RF на CSMNR+yLin+y01, все данные тренировочные (50к) = 75.73% !!!
 #24.10.15 - RF на CSMNR+yLin+y06, все данные тренировочные (50к) = 75.51% !!!
+#25.10.15 - RF на CSMNR+yLin+y016, все данные тренировочные (50к) = 75.27% !!!
 
 dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted, stringsAsFactors = FALSE)
 #View(dfPredicted)
 
 
-write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y06_All.csv", sep=",", quote=FALSE, row.names=FALSE)
+write.table(dfPredicted, "../data/151025_sol_CostSubstMedianRange_yLin_y016_All.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 
@@ -731,6 +732,8 @@ write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y06_All.c
 - для модели случайный лес, аналогичной предыдущей, к которой был добавлен предсказанный непрерывный параметр возраста (yLin),  точность оказалась **75.77** .
 - для модели случайный лес, аналогичной предыдущей, к которой был добавлен предсказанный бинарный параметр, показывающий принадлежность к возрастной группе 0 (y0),  точность оказалась **76.07%**.
 - для модели случайный лес, аналогичной предыдущей, к которой были добавлены предсказанные бинарные параметры, показывающие принадлежность к возрастным группам 0 (y0) и 6 (y6),  точность оказалась **75.51%**.
+ - для модели случайный лес, аналогичной предыдущей, к которой были добавлены предсказанные бинарные параметры, показывающие принадлежность к возрастным группам 0 (y0), 1(y1) и 6 (y6),  точность оказалась **75.27%**. При добавлении таких классов происходит переобучение модели.
+ 
  
  увеличить nTree
 
