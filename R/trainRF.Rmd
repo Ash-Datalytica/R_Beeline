@@ -18,13 +18,14 @@ require(caret) #dummyVars, featurePlot
 require(parallel) #detectCores()
 require(doSNOW)
 require (ggplot2)
-require(gridECxtra)
+require(gridExtra)
 require(rattle) #fancyRpartPlot
 require(reshape2) #melt
 require(rpart)
 require(ROCR) #myPlotROC()
 require (plyr); require(dplyr) #чтобы загружались именно в таком порядке
 require (ROSE) # for oversampling
+require(C50)
 
 eval(parse('common.R',encoding = "UTF-8"))
 
@@ -113,8 +114,8 @@ colFeaturesYLin3 <- c("yLin",setdiff(importantFeatures3, "y")) # убираем 
 system.time({
     set.seed(1234)
     modGLMBoost <- train (yLin ~ ., method="glmboost", 
-                    data = dfTrainAll[colFeaturesYLin3], # для финального рассчета
-                    #data = dfTrainFull[colFeaturesYLin3], # для отладки - чтобы смотреть на точность предсказания
+                    #data = dfTrainAll[colFeaturesYLin3], # для финального рассчета
+                    data = dfTrainFull[colFeaturesYLin3], # для отладки - чтобы смотреть на точность предсказания
                     trControl = trainControl(method = "cv", number=10, repeats=5)
                     #количество деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
@@ -186,6 +187,12 @@ dfTestFull$yLin <- predict (modGLMBoost, newdata = dfTestFull)
 dfTest$yLin <- predict (modGLMBoost, newdata = dfTest)
 dfTrainAll$yLin <- predict (modGLMBoost, newdata = dfTrainAll)
 
+dfTrainFull$yLin <- ifelse(dfTrainFull$yLin<0,0,dfTrainFull$yLin)
+dfTrainFull$yLin <- ifelse(dfTrainFull$yLin>6,6,dfTrainFull$yLin)
+
+dfTestFull$yLin <- ifelse(dfTestFull$yLin<0,0,dfTestFull$yLin)
+dfTestFull$yLin <- ifelse(dfTestFull$yLin>6,6,dfTestFull$yLin)
+
 ```
 
 Обе рассмотренные модели (линейная и случайный лес) не очень хорошо предсказывают возраст. Обе склонны "завышать" возраст для возрастных групп 0 и 1. Построенные на основе обогащенных предсказаниями этих моделей модели Случйный лес и RSNNS дают точность ~69%.
@@ -198,10 +205,13 @@ dfTrainAll$yLin <- predict (modGLMBoost, newdata = dfTrainAll)
 Построим отдельную модель, которая будет предсказывать только возрастную группу "0/не 0". Случайный лес делает это плохо. Хорошую модель найти не удалось. Лучший результат дает модель С5.0 (усиленный случайный лес) на расширенном (oversampled) наобре тренировочных данных. Параметр Cost позволяет увеличить цену ошибок FN по сравнению с TP, т.е. сократить FN, возможно, увеличив TP. D нашем случае это интересно, но большие значения не подходят, т.к. мы используем уже сбалансированную по числу случаем для каждого класса обучающую выборку. Путем перебора разных значений параметров Cost и trials с целью получения минимального количества FN и максимального TP на *тестовой* выборке при FN На тренировочной = 0, определяем оптимальные значения Cost=3, trials = 5.
 
 ```{r dataModN, echo=FALSE, warning = FALSE}
-dfTrainFull$y0 <- as.factor(ifelse(dfTrainFull$y==0, 1, 0))
-dfTrainFull$y1 <- as.factor(ifelse(dfTrainFull$y==1, 1, 0))
-dfTrainFull$y6 <- as.factor(ifelse(dfTrainFull$y==6, 1, 0))
+dfTrainFull$y_0 <- as.factor(ifelse(dfTrainFull$y==0, 1, 0))
+dfTrainFull$y_1 <- as.factor(ifelse(dfTrainFull$y==1, 1, 0))
+dfTrainFull$y_4 <- as.factor(ifelse(dfTrainFull$y==4, 1, 0))
+dfTrainFull$y_6 <- as.factor(ifelse(dfTrainFull$y==6, 1, 0))
+#dfTrainFull$y01 <- as.factor(ifelse(dfTrainFull$y==0|dfTrainFull$y==1, 1, 0))
 #View(dfTrainFull0)
+#dfTrainFull <- dfTrainFull %>% select (-y01)
 
 #dfTrain0 <- dfTrain
 #dfTrain$y0 <- as.factor(ifelse(dfTrain$y==0, 1, 0))
@@ -211,11 +221,13 @@ dfTrainFull$y6 <- as.factor(ifelse(dfTrainFull$y==6, 1, 0))
 
 #исключаем yLin из иптиска параметров, чтобы не было "зацикливания" на предсказанных линейной моделью значеий
 # таким образом по сути строим ансамбль моделей: Линейная, SVM и тп.
-colFeaturesY0 <- c("y0",setdiff(colnames(dfTrainFull), c("y", "yLin","y1","y2","y3","y4","y5","y6")))
-colFeaturesY1 <- c("y1",setdiff(colnames(dfTrainFull), c("y", "yLin", "y0","y1","y2","y3","y4","y5","y6")))
-colFeaturesY1 <- c("y6",setdiff(colnames(dfTrainFull), c("y", "yLin", "y0","y1","y2","y3","y4","y5","y6"))) 
-importantFeatures1Y0 <- c("y0",setdiff(importantFeatures1, c("y", "yLin","y1"))) 
-table(dfTrainAll$y)
+colFeaturesY0 <- c("y_0",setdiff(colnames(dfTrainFull), c("y", "yLin","y_0", "y_1","y_2","y_3","y_4","y_5","y_6","y_01")))
+colFeaturesY1 <- c("y_1",setdiff(colnames(dfTrainFull), c("y", "yLin", "y_0", "y_1","y_2","y_3","y_4","y_5","y_6","y_01")))
+colFeaturesY4 <- c("y_4",setdiff(colnames(dfTrainFull), c("y", "yLin", "y_0", "y_1","y_2","y_3","y_4","y_5","y_6","y_01")))
+colFeaturesY6 <- c("y_6",setdiff(colnames(dfTrainFull), c("y", "yLin", "y_0", "y_1","y_2","y_3","y_4","y_5","y_6","y_01"))) 
+#colFeaturesY01 <- c("y01",setdiff(colnames(dfTrainFull), c("y", "yLin","y0", "y1","y2","y3","y4","y5","y6","y01")))
+#importantFeatures1Y0 <- c("y0",setdiff(importantFeatures1, c("y", "yLin","y1"))) 
+#table(dfTrainAll$y)
 
 ```
 
@@ -271,13 +283,13 @@ table(dfTrainAll$y)
 # x39      71.20
 ######
 
-table(dfTrainFull$y0)
-dfTrainFullBalanced0 <- ovun.sample(y0 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced0$y0)
+table(dfTrainFull$y_0)
+dfTrainFullBalanced0 <- ovun.sample(y_0 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+table(dfTrainFullBalanced0$y_0)
 
 system.time({
     set.seed(1234)
-    mod0 <- train (y0~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
+    mod0 <- train (y_0~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
                    #method="rf", #BalancedAccuracy = .50
                    ## Boosting methods
                     #method="LogitBoost", #BalancedAccuracy = .67
@@ -310,7 +322,7 @@ mod0
 varImp(mod0)
 
 caret::confusionMatrix(data = predict(mod0, newdata = dfTrainFullBalanced0), 
-                             reference = dfTrainFullBalanced0$y0,
+                             reference = dfTrainFullBalanced0$y_0,
                              positive="1")
 
 
@@ -320,23 +332,23 @@ caret::confusionMatrix(data = predictedTest,
                              reference = as.factor(ifelse(dfTestFull$y==0,1,0)),
                              positive="1")
 
-dfTrainFull$y0 <- predict(mod0, newdata=dfTrainFull)
-dfTestFull$y0 <- predictedTest
-dfTrainAll$y0 <- predict(mod0, newdata=dfTrainAll)
+dfTrainFull$y_0 <- predict(mod0, newdata=dfTrainFull)
+dfTestFull$y_0 <- predictedTest
+dfTrainAll$y_0 <- predict(mod0, newdata=dfTrainAll)
 
 ```
 Среди результатов сначала видим распределение целевого класса (1 = "Возрастная группа = 0", 0 = "Возрастная группа <> 0") до расширения выборки, а потом - после расширения тренировочного набора данных. Расшиение выборки произошло за счет дублирования примеров из класса 1.
 
 Первая матрица неточностей показывает, что модель предсказывает всех пользователей из возрастной группы 0 (class=1) (FN=0) и при этом имеет неплохую Balanced Accuracy=99.31% на обучающих данных. Вторая матрица неточностей построена для тестовых данных и показывает Balanced Accuracy =55.84%. В идеале хотелось бы иметь на тестовых данных также FN=0 и более высокую BA. 
 
-Построим модель, предсказывающую возрастную группу 1.
+Построим модель, предсказывающую возрастную группу 1. Лучше всего конечный результат при C=1, но все равно он хуже, чем без этой модели. Пока не будем ее использовать. Возможно, стоит попробовать другой тип можели для более сильной классификации, например, 2-class SVM.
 
-```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+```{r trainMod1, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=TRUE}
 
 
-table(dfTrainFull$y1)
-dfTrainFullBalanced1 <- ovun.sample(y1 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced1$y1)
+table(dfTrainFull$y_1)
+dfTrainFullBalanced1 <- ovun.sample(y_1 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+table(dfTrainFullBalanced1$y_1)
 
 # inFeatureSelect <- createDataPartition(dfTrainFullBalanced1$y1, p = .1, list = FALSE, times = 1)
 # system.time({
@@ -402,12 +414,198 @@ table(dfTrainFullBalanced1$y1)
 #берем первые 25 переменных
 system.time({
     set.seed(1234)
-    mod1 <- train (y1~x8+x55+x30+x23+x29+x37+x24+x13+x56+x53+x59+x54+x25+x17+x57+x27+x28+x58+x61+x43+x40+x31+x33+x32, #y1 ~ .
+    mod1 <- train (y_1~x8+x55+x30+x23+x29+x37+x24+x13+x56+x53, #x8
+                   #y_1~x8+x55+x30+x23+x29+x37+x24+x13+x56+x53+x59+x54+x25+x17+x57+x27+x28+x58+x61+x43+x40+x31+x33+x32
+                   ## Cost-sensitive methods
+                    #method = "C5.0Cost",# меньше столбцов!
+                   method="mlp",
+                    #data = dfTrainFull0[colFeaturesY0], #
+                    #data = dfTrainExt[importantFeatures1Y0], #
+                    data = dfTrainFullBalanced1, # 
+                    trControl = trainControl(method = "cv", number=10, repeats=3),
+                    learnFunc= "BackpropMomentum", 
+                    #1) learning param (0.1:2), 2) momentum term (0:1), 
+                    #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
+                    #4) the maximum difference
+                    #see SNNS User Manual, pp. 67 
+                    learnFuncParams = c(0.1, 0.05, 0.1, 0.001), 
+                    hiddenActFunc = "Act_LogSym", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
+                    maxit=50,   
+                   ##C5.0Cost
+#                     tuneGrid = expand.grid(trials=c(10), #50 - хуже
+#                                            model="tree",
+#                                            winnow=FALSE,
+#                                            cost=c(100)
+#                        )
+                   ## mlp
+                    tuneGrid = expand.grid(
+                        size = c(5,6,7)
+                          )
+
+#                     tuneLength=3
+    )
+}) # 
+
+
+mod1 
+#summary(mod1)
+#ggplot(mod1)
+#varImp(mod1)
+plotIterativeError(mod1$finalModel)
+
+caret::confusionMatrix(data = predict(mod1, newdata = dfTrainFullBalanced1), 
+                             reference = dfTrainFullBalanced1$y_1,
+                             positive="1")
+
+
+predictedTest <- predict (mod1, newdata = dfTestFull)
+#table(predictedTest)
+caret::confusionMatrix(data = predictedTest, 
+                             reference = as.factor(ifelse(dfTestFull$y==1,1,0)),
+                             positive="1")
+
+dfTrainFull$y_1 <- predict(mod1, newdata=dfTrainFull)
+dfTestFull$y_1 <- predictedTest
+dfTrainAll$y_1 <- predict(mod1, newdata=dfTrainAll)
+
+```
+
+Следующие по величине ошибки возрастные группы №6, №5 и №4. В следующих версиях сосредоточимся на них.
+
+```{r trainMod4, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+
+
+table(dfTrainFull$y_4)
+dfTrainFullBalanced4 <- ovun.sample(y_4 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+table(dfTrainFullBalanced4$y_4)
+
+# inFeatureSelect <- createDataPartition(dfTrainFullBalanced4$y_4, p = .1, list = FALSE, times = 1)
+# system.time({
+#     set.seed(1234)
+#     modTmp <- train (y_4 ~ .,
+#                    ## Cost-sensitive methods
+#                     method = "rf",# меньше столбцов!
+#                     #data = dfTrainFull0[colFeaturesY0], #
+#                     #data = dfTrainExt[importantFeatures1Y0], #
+#                     data = dfTrainFullBalanced4[inFeatureSelect,colFeaturesY4], # 
+#                     nTree=50,
+#                     trControl = trainControl(method = "cv", number=10, repeats=3),
+#                    ##C5.0Cost
+#                     tuneGrid = expand.grid(                        
+#                         ## RF
+#                         mtry=c(9,11,15,21, 35, 37)
+#                        )
+# #                     tuneLength=3
+#     )
+# }) # 
+# 
+# #ggplot(modTmp)
+# 
+# vi <- varImp(modTmp)
+# vi <- vi$importance 
+# vi$varName <-  modTmp$coefnames
+# viTop <- vi %>% arrange(desc(Overall)) %>% 
+#     top_n(50, Overall) 
+# viTop
+#
+#        Overall varName
+# 1  100.0000000      x8
+# 2   18.5300273     x58
+# 3    8.3193505     x30
+# 4    4.8351651     x23
+# 5    4.0973606     x29
+# 6    3.9700698     x56
+# 7    3.6789884     x54
+# 8    3.6507514     x61
+# 9    3.3541939     x37
+# 10   3.3178802     x24
+# 11   3.1088929    x214
+# 12   3.0890758     x57
+# 13   3.0385860     x13
+# 14   3.0302292     x43
+# 15   3.0223026     x53
+# 16   3.0071968     x59
+# 17   3.0035054     x41
+# 18   2.8956934     x27
+# 19   2.7588508     x26
+# 20   2.7509639     x33
+# 21   2.7008753     x25
+# 22   2.6653908     x40
+# 23   2.5827177     x28
+# 24   2.4899443     x42
+# 25   2.2073900     x44
+
+#берем первые  переменных
+system.time({
+    set.seed(1234)
+    mod4 <- train (y_4~x8+x58+x30+x23+x29+x56+x54+x61+x37+x24+x21, #x8
+                   method = "mlp",
+                   ## Cost-sensitive methods
+                    #method = "C5.0Cost",# меньше столбцов!
+                    #data = dfTrainFull0[colFeaturesY0], #
+                    #data = dfTrainExt[importantFeatures1Y0], #
+                    data = dfTrainFullBalanced4[colFeaturesY4], # 
+                    learnFunc= "BackpropMomentum", 
+                    #1) learning param (0.1:2), 2) momentum term (0:1), 
+                    #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
+                    #4) the maximum difference
+                    #see SNNS User Manual, pp. 67 
+                    learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+                    hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
+                    maxit=5000,
+                    trControl = trainControl(method = "cv", number=10, repeats=3),
+                   ##C5.0Cost
+#                     tuneGrid = expand.grid(trials=c(10), #50 - хуже
+#                                            model="tree",
+#                                            winnow=FALSE,
+#                                            cost=c(1)
+#                        )
+                    tuneGrid = expand.grid(
+                          size = c(4,5)
+                          )
+                     #tuneLength=3
+    )
+}) # 
+
+mod4 
+#mod4$finalModel 
+#summary(mod4)
+#ggplot(mod4)
+#varImp(mod4)
+plotIterativeError(mod4$finalModel)
+
+caret::confusionMatrix(data = predict(mod4, newdata = dfTrainFullBalanced4), 
+                             reference = dfTrainFullBalanced4$y4,
+                             positive="1")
+
+
+predictedTest <- predict (mod4, newdata = dfTestFull)
+#table(predictedTest)
+caret::confusionMatrix(data = predictedTest, 
+                             reference = as.factor(ifelse(dfTestFull$y==4,1,0)),
+                             positive="1")
+
+dfTrainFull$y_4 <- predict(mod4, newdata=dfTrainFull)
+dfTestFull$y_4 <- predictedTest
+dfTrainAll$y_4 <- predict(mod4, newdata=dfTrainAll)
+
+```
+
+```{r trainMod6, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+
+
+table(dfTrainFull$y6)
+dfTrainFullBalanced6 <- ovun.sample(y6 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+table(dfTrainFullBalanced6$y6)
+
+system.time({
+    set.seed(1234)
+    mod6 <- train (y6~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
                    ## Cost-sensitive methods
                     method = "C5.0Cost",# меньше столбцов!
                     #data = dfTrainFull0[colFeaturesY0], #
                     #data = dfTrainExt[importantFeatures1Y0], #
-                    data = dfTrainFullBalanced1, # 
+                    data = dfTrainFullBalanced6, #
                     trControl = trainControl(method = "cv", number=10, repeats=3),
                    ##C5.0Cost
                     tuneGrid = expand.grid(trials=c(10), #50 - хуже
@@ -419,112 +617,201 @@ system.time({
     )
 }) # 
 
-mod1 
-#summary(mod1)
-#ggplot(mod1)
-#varImp(mod1)
+mod6
+#summary(mod6)
+#ggplot(mod6)
+#varImp(mod6)
 
-caret::confusionMatrix(data = predict(mod1, newdata = dfTrainFullBalanced1), 
-                             reference = dfTrainFullBalanced1$y1,
+caret::confusionMatrix(data = predict(mod6, newdata = dfTrainFullBalanced6), 
+                             reference = dfTrainFullBalanced6$y6,
                              positive="1")
 
-
-predictedTest <- predict (mod1, newdata = dfTestFull)
+predictedTest <- predict (mod6, newdata = dfTestFull)
 #table(predictedTest)
 caret::confusionMatrix(data = predictedTest, 
-                             reference = as.factor(ifelse(dfTestFull$y==1,1,0)),
+                             reference = as.factor(ifelse(dfTestFull$y==6,1,0)),
                              positive="1")
 
-dfTrainFull$y1 <- predict(mod1, newdata=dfTrainFull)
-dfTestFull$y1 <- predictedTest
-dfTrainAll$y1 <- predict(mod1, newdata=dfTrainAll)
+dfTrainFull$y6 <- predict(mod6, newdata=dfTrainFull)
+dfTestFull$y6 <- predictedTest
+dfTrainAll$y6 <- predict(mod6, newdata=dfTrainAll)
 
 ```
 
-```{r trainMod6, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
 
 
-table(dfTrainFull$y)
-dfTrainFullBalanced1 <- ovun.sample(y1 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced1$y1)
+```{r trainMod01, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE, eval=FALSE}
+table(dfTrainFull$y01)
+dfTrainFullBalanced01 <- ovun.sample(y01 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+table(dfTrainFullBalanced01$y01)
 
+# inFeatureSelect <- createDataPartition(dfTrainFullBalanced01$y01, p = .1, list = FALSE, times = 1)
+# system.time({
+#     set.seed(1234)
+#     modTmp <- train (y01 ~ .,
+#                    ## Cost-sensitive methods
+#                     method = "rf",# меньше столбцов!
+#                     #data = dfTrainFull0[colFeaturesY0], #
+#                     #data = dfTrainExt[importantFeatures1Y0], #
+#                     data = dfTrainFullBalanced01[inFeatureSelect,colFeaturesY01], # 
+#                     nTree=50,
+#                     trControl = trainControl(method = "cv", number=10, repeats=3),
+#                    ##C5.0Cost
+#                     tuneGrid = expand.grid(                        
+#                         ## RF
+#                         mtry=c(9,11,15,21)
+#                        )
+# #                     tuneLength=3
+#     )
+# }) # 
+# 
+# #ggplot(modTmp)
+# 
+# vi <- varImp(modTmp)
+# vi <- vi$importance 
+# vi$varName <-  modTmp$coefnames
+# viTop <- vi %>% arrange(desc(Overall)) %>% 
+#     top_n(50, Overall) 
+# viTop
+##
+#       Overall varName
+# 1  100.000000      x8
+# 2   99.753880     x55
+# 3   82.147551     x30
+# 4   49.714243     x23
+# 5   35.661237     x56
+# 6   35.475958     x37
+# 7   33.301138     x24
+# 8   32.146115     x29
+# 9   31.104749     x53
+# 10  29.050729     x25
+# 11  26.922662     x54
+# 12  26.500442     x13
+# 13  26.239310     x59
+# 14  25.741397     x28
+# 15  24.902715     x27
+# 16  24.450269     x58
+# 17  23.792516     x61
+# 18  23.657081     x40
+# 19  22.753963     x41
+# 20  22.196435     x57
+# 21  21.998794     x43
+# 22  21.031882     x32
+# 23  20.628717    x172
+# 24  20.342435     x31
+# 25  20.158912     x42
+#берем первые 15 переменных
 system.time({
     set.seed(1234)
-    mod6 <- train (y1~x8+x23+x24+x30+x35+x37+x38+x39+x43+x44+x56+x57+x59, #y0 ~ .
+    mod01 <- train (y01~x8+x55+x30+x23+x56+x37+x24+x29+x53+x25+x54+x13+x59+x28+x27, #x8
                    ## Cost-sensitive methods
                     method = "C5.0Cost",# меньше столбцов!
                     #data = dfTrainFull0[colFeaturesY0], #
                     #data = dfTrainExt[importantFeatures1Y0], #
-                    data = dfTrainFullBalanced1, #
+                    data = dfTrainFullBalanced01, # 
                     trControl = trainControl(method = "cv", number=10, repeats=3),
                    ##C5.0Cost
                     tuneGrid = expand.grid(trials=c(10), #50 - хуже
                                            model="tree",
                                            winnow=FALSE,
-                                           cost=c(100)
+                                           cost=c(3)
                        )
 #                     tuneLength=3
     )
 }) # 
 
-mod1 
+mod01
 #summary(mod1)
 #ggplot(mod1)
 #varImp(mod1)
 
-caret::confusionMatrix(data = predict(mod1, newdata = dfTrainFullBalanced1), 
-                             reference = dfTrainFullBalanced1$y1,
+caret::confusionMatrix(data = predict(mod01, newdata = dfTrainFullBalanced01), 
+                             reference = dfTrainFullBalanced01$y01,
                              positive="1")
 
 
-predictedTest <- predict (mod1, newdata = dfTestFull)
+predictedTest <- predict (mod01, newdata = dfTestFull)
 #table(predictedTest)
 caret::confusionMatrix(data = predictedTest, 
-                             reference = as.factor(ifelse(dfTestFull$y==1,1,0)),
+                             reference = as.factor(ifelse(dfTestFull$y==1|dfTestFull$y==1,1,0)),
                              positive="1")
 
-dfTrainFull$y1 <- predict(mod1, newdata=dfTrainFull)
-dfTestFull$y1 <- predictedTest
-dfTrainAll$y1 <- predict(mod1, newdata=dfTrainAll)
+dfTrainFull$y01 <- predict(mod01, newdata=dfTrainFull)
+dfTestFull$y01 <- predictedTest
+dfTrainAll$y01 <- predict(mod01, newdata=dfTrainAll)
 
 ```
-
-
 ### Случайный лес (Random Forest, rf)
 
  RF.
 
 ```
- DataType      Size   Feat nTree Time  mtry   Acc
- CSMNR         37502, все, 100    17m   81      75.26%
- CSMNR+Lin     37502, все, 100      m   39      75.19%
- CSMNR+Lin     50000, все, 100      m   39      75.19%
- CSMNR+Lin+y0  50000, все, 100    17m   39      75.79%
-
+ DataType        Size   Feat nTree Time  mtry   Acc
+ CSMNR           37502, все, 100    17m   81      75.26%
+ CSMNR+Lin       37502, все, 100      m   39      75.19%
+ CSMNR+Lin       50000, все, 100      m   39      75.19%
+ CSMNR+Lin+y0    50000, все, 100    17m   39      75.79%
+ CSMNR+Lin+y06   50000, все, 100    m   39      %
 ```
 
 ```{r trainRandomForest, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+#colnames(dfTrainAll)
+colFeaturesYLinY0 <- c("y","yLin",colFeaturesY0)
+colFeaturesYLinY01 <- c("y_1", colFeaturesYLinY0)
+#colFeaturesYLinY0101 <- c("y01", colFeaturesYLinY01)
+colFeaturesYLinY014 <- c("y_4", colFeaturesYLinY01)
+#View(dfTrainFull[colFeaturesYLinY01])
+
+# dfTrainFull$yLin <- dfTrainFull$yLin - (as.numeric(predict(mod0, newdata=dfTrainFull))-1)*4
+# dfTrainFull$yLin <- dfTrainFull$yLin - (as.numeric(predict(mod1, newdata=dfTrainFull))-1)*2
+# dfTrainFull$yLin <- ifelse(dfTrainFull$yLin<0,0,dfTrainFull$yLin)
+# dfTrainFull$yLin <- ifelse(dfTrainFull$yLin>6,6,dfTrainFull$yLin)
+
+# dfTestFull$yLin <- dfTestFull$yLin - (as.numeric(predict(mod0, newdata=dfTestFull))-1)*4
+# dfTestFull$yLin <- dfTestFull$yLin - (as.numeric(predict(mod1, newdata=dfTestFull))-1)*2
+# dfTestFull$yLin <- ifelse(dfTestFull$yLin<0,0,dfTestFull$yLin)
+# dfTestFull$yLin <- ifelse(dfTestFull$yLin>6,6,dfTestFull$yLin)
+
+#qplot (x=dfTrainFull$yLin, y = dfTrainFull$y) #+ stat_smooth(formula = y ~x, method="lm")
+#qplot (x=dfTestFull$yLin, y = dfTestFull$y) #+ stat_smooth(formula = y ~x, method="lm")
+
 
 nTree <- 100 #500
 system.time({
     set.seed(1234)
-    modRF <- train (y ~ ., method="rf", #rf, C5.0
-                    #data = dfTrainFull [importantFeatures1], #
-                    data = dfTrainAll, # финальный
-                    #data = dfTrainFull, # 
+    modRF <- train (y ~ #x8+y_4+yLin+x57+x56+x30+x29+x58+x23+x59, 
+                    method="rf", #rf, C5.0
+                    #method="mlp",
+                    #method="rpartCost", #
+                    #data = dfTrainAll, # финальный
+                    #data = dfTrainFull[setdiff(colFeaturesYLinY01,c("x1","x4", "x5"))], #
+                    data = dfTrainFull[colFeaturesYLinY014], # 
                     trControl = trainControl(method = "cv", number=10, repeats=5),
                     #количество деревьев в лесу.
                     #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
+                    ##RF
                     ntree= nTree, 
                     tuneGrid = expand.grid(
                         ## RF
-                        mtry=c(21, 35, 37, 39, 41, 43, 45, 70)
+                        mtry=c(9,21, 35, 37, 39, 41, 43, 45) #35, 
                         ## C5.0
 #                         trials=c(5,10,20),
 #                         model="tree",
 #                         winnow=FALSE
                         )
-#                    tuneLength=3
+                    ## mlp
+#                     learnFunc= "BackpropMomentum", 
+#                     #1) learning param (0.1:2), 2) momentum term (0:1), 
+#                     #3) flat spot elimination value (0:0:25, most often 0.1 is used.), 
+#                     #4) the maximum difference
+#                     #see SNNS User Manual, pp. 67 
+#                     learnFuncParams = c(0.1, 0.03, 0.1, 0.001), 
+#                     hiddenActFunc = "Act_TanH", #"Act_Logistic", "Act_LogSym" - быстрее, "Act_TanH""
+#                     maxit=5000,
+#                     tuneGrid = expand.grid(
+#                           size = c(7, 14)
+#                           )
+                    # tuneLength=3
     )
 }) # 
 modRF
@@ -539,7 +826,7 @@ plot(modRF$finalModel, log="y")
 # par(mar=c(5,0,4,2)) #No margin on the left side
 # plot(c(0,1),type="n", axes=F, xlab="", ylab="")
 # legend("top", colnames(modRF$finalModel$err.rate),col=1:8,cex=0.8,fill=1:8)
-
+#plotIterativeError(modRF$finalModel) #mlp
 
 vi <- varImp(modRF)
 vi <- vi$importance 
@@ -547,10 +834,146 @@ vi$varName <-  modRF$coefnames
 viTop <- vi %>% arrange(desc(Overall)) %>% 
     top_n(50, Overall) 
 viTop
+#paste0(viTop$varName[1:30], collapse = "+")
+# для mlp, yLin+Y014
+#"x8+y_41+yLin+x57+x56+x30+x29+x58+x23+x59+x37+x54+x61+x13+x24+x27+x41+x53+x40+x43+x26+x28+x25+x42+x33+y_01+x55+x36+x60+x31"
+#############################
+#для YlinY014
+#        Overall varName
+# 1  100.0000000      x8
+# 2   21.8048232    y_41
+# 3   15.2637251    yLin
+# 4    9.0324864     x57
+# 5    6.9186446     x56
+# 6    6.7312996     x30
+# 7    5.7881210     x29
+# 8    4.9736806     x58
+# 9    4.8459430     x23
+# 10   4.2373747     x59
+# 11   4.1011305     x37
+# 12   3.9898458     x54
+# 13   3.8711860     x61
+# 14   3.6823166     x13
+# 15   3.6303444     x24
+# 16   3.6118318     x27
+# 17   3.5809887     x41
+# 18   3.5537446     x53
+# 19   3.5535816     x40
+# 20   3.2848990     x43
+# 21   3.2658264     x26
+# 22   3.1347602     x28
+# 23   3.1199666     x25
+# 24   2.9274246     x42
+# 25   2.9091326     x33
+# 26   2.7698889    y_01
+# 27   2.7052077     x55
+# 28   2.5557855     x36
+# 29   2.5369083     x60
+# 30   2.4702552     x31
+#############################
+
+caret::confusionMatrix(data = predict(modRF, newdata=dfTrainFull), 
+                       reference = dfTrainFull$y)
+
+caret::confusionMatrix(data = predict(modRF, newdata=dfTestFull), 
+                       reference = dfTestFull$y)
 
 
 #acc <- modRF$results$Accuracy[as.numeric(rownames(modRF$bestTune)[1])]
 paramRF <- modRF$bestTune$mtry
+
+
+## Ylin+y0 (finalModel)
+#        Overall varName
+# 1  100.0000000      x8
+# 2   15.6301173    yLin
+# 3    8.9846502     x57
+# 4    7.7340290     x56
+# 5    6.9437670     x58
+# 6    6.6173930     x30
+# 7    5.0941305     x29
+# 8    4.7339824     x23
+# 9    4.1601498     x59
+#                      Number of trees: 100
+# No. of variables tried at each split: 39
+# 
+#         OOB estimate of  error rate: 24.48%
+# Confusion matrix:
+#     0   1    2    3    4    5   6 class.error
+# 0 185   5   22   26   13   14   6   0.3173432
+# 1   4 436  399  299  269   58   8   0.7040054
+# 2   1 129 9722 1093  550  296  40   0.1782605
+# 3  12  28  973 9029  642  255  69   0.1797783
+# 4   2  43  631  775 5633  361  64   0.2498335
+# 5   0  18  467  408  411 2676  85   0.3416974
+# 6   1   9  100  253  169  171 642   0.5226766
+# TestFull
+# Confusion Matrix and Statistics
+# 
+#           Reference
+# Prediction    0    1    2    3    4    5    6
+#          0    5    4    5   20    6    0    0
+#          1    0  138   46    5    8    3    2
+#          2   16  130 3215  306  215  146   41
+#          3   37   99  349 3034  236  136   76
+#          4   19   97  209  205 1893  110   45
+#          5    9   15  106   75  122  936   44
+#          6    4    8   13   24   23   23  240
+#Accuracy : 0.757 
+# Statistics by Class:
+# 
+#                       Class: 0 Class: 1 Class: 2 Class: 3 Class: 4 Class: 5 Class: 6
+# Sensitivity          0.0555556  0.28106   0.8154   0.8269   0.7563  0.69129  0.53571
+# Specificity          0.9971792  0.99467   0.9002   0.8943   0.9315  0.96671  0.99212
+# Pos Pred Value       0.1250000  0.68317   0.7901   0.7648   0.7343  0.71614  0.71642
+# Neg Pred Value       0.9931771  0.97129   0.9136   0.9256   0.9385  0.96265  0.98290
+# Prevalence           0.0072012  0.03929   0.3155   0.2936   0.2003  0.10834  0.03585
+# Detection Rate       0.0004001  0.01104   0.2572   0.2428   0.1515  0.07489  0.01920
+# Detection Prevalence 0.0032005  0.01616   0.3256   0.3174   0.2063  0.10458  0.02680
+# Balanced Accuracy    0.5263674  0.63786   0.8578   0.8606   0.8439  0.82900  0.76392
+
+
+
+## Ylin+y01 (finalModel)
+#                      Number of trees: 100
+# No. of variables tried at each split: 35
+# 
+#         OOB estimate of  error rate: 21.63%
+# Confusion matrix:
+#     0    1    2    3    4    5   6 class.error
+# 0 192    0   24   24   11   13   7  0.29151292
+# 1   0 1407   12   26   22    5   1  0.04480652
+# 2   1   59 9749 1120  588  280  34  0.17597836
+# 3  11    7  983 9092  596  245  74  0.17405523
+# 4   2   12  621  808 5642  358  66  0.24863497
+# 5   0    4  469  426  428 2661  77  0.34538745
+# 6   1    2  120  249  154  170 649  0.51747212
+# 
+# Confusion Matrix and Statistics
+# 
+#           Reference
+# Prediction    0    1    2    3    4    5    6
+#          0    4    3    3   19    7    0    0
+#          1    7  183   80   32   28    4    4
+#          2   14  100 3185  296  211  144   40
+#          3   33   90  354 3032  249  135   80
+#          4   18   92  206  194 1857  105   46
+#          5    9   16  103   73  131  942   41
+#          6    5    7   12   23   20   24  237
+# 
+# Overall Statistics
+#                Accuracy : 0.7553          
+# Statistics by Class:
+# 
+#                       Class: 0 Class: 1 Class: 2 Class: 3 Class: 4 Class: 5 Class: 6
+# Sensitivity          0.0444444  0.37271   0.8078   0.8264   0.7419  0.69572  0.52902
+# Specificity          0.9974210  0.98709   0.9059   0.8934   0.9339  0.96653  0.99245
+# Pos Pred Value       0.1111111  0.54142   0.7982   0.7632   0.7375  0.71635  0.72256
+# Neg Pred Value       0.9930990  0.97467   0.9109   0.9253   0.9353  0.96316  0.98266
+# Prevalence           0.0072012  0.03929   0.3155   0.2936   0.2003  0.10834  0.03585
+# Detection Rate       0.0003201  0.01464   0.2548   0.2426   0.1486  0.07537  0.01896
+# Detection Prevalence 0.0028805  0.02704   0.3193   0.3179   0.2015  0.10522  0.02624
+# Balanced Accuracy    0.5209327  0.67990   0.8568   0.8599   0.8379  0.83112  0.76073
 ```
 
 За счет параметра y0 нам удалось снизить точность предсказания редкой возрастной группы 0 до ~0.7 (ранее была ~0.9).
@@ -690,6 +1113,7 @@ dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
 dfFinalTest$yLin <- predict (modGLMBoost, newdata = dfFinalTest)
 dfFinalTest$y0 <- predict (mod0, newdata = dfFinalTest)
 dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
+dfFinalTest$y6 <- predict (mod6, newdata = dfFinalTest)
 
 #table (dfTrainFull$y)
 #apply(dfFinalTest, 2, function(x)sum(is.na(x)))
@@ -712,12 +1136,14 @@ predicted <- predict (modFinal, newdata = dfFinalTest)
 #24.10.15 - RF на CSMNR+yLin+y01, все данные тренировочные (50к) = 74.75% !!!
 #24.10.15 - RF на CSMNR+yLin+y0, nTree=50, все данные тренировочные (50к) = 75.76% => nTree важен!
 #24.10.15 - RF на CSMNR+yLin+y01, все данные тренировочные (50к) = 75.73% !!!
+#24.10.15 - RF на CSMNR+yLin+y06, все данные тренировочные (50к) = 75.51% !!!
+#25.10.15 - RF на CSMNR+yLin+y016, все данные тренировочные (50к) = 75.27% !!!
 
 dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted, stringsAsFactors = FALSE)
 #View(dfPredicted)
 
 
-write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y01_All.csv", sep=",", quote=FALSE, row.names=FALSE)
+#write.table(dfPredicted, "../data/151025_sol_CostSubstMedianRange_yLin_y0xx_All.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 
@@ -727,6 +1153,9 @@ write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y01_All.c
  - для модели (LogitBoost) точность оказалась **70.81%**. Низкая точность обусловлена спефикой модели (NA в предсказанных классах).  - для модели случайный лес на данных CSMNR (NA в категориях заменены на константу, категории в длинных переменных (> 5 категорий) заменены на наиболее вероятный для них класс, NA в новых категориях тестового примера также заменены на константу, числовые переменные преобразованы линейно в диапазон [0,1] ) точность оказалась **75.73%**.
 - для модели случайный лес, аналогичной предыдущей, к которой был добавлен предсказанный непрерывный параметр возраста (yLin),  точность оказалась **75.77** .
 - для модели случайный лес, аналогичной предыдущей, к которой был добавлен предсказанный бинарный параметр, показывающий принадлежность к возрастной группе 0 (y0),  точность оказалась **76.07%**.
+- для модели случайный лес, аналогичной предыдущей, к которой были добавлены предсказанные бинарные параметры, показывающие принадлежность к возрастным группам 0 (y0) и 6 (y6),  точность оказалась **75.51%**.
+ - для модели случайный лес, аналогичной предыдущей, к которой были добавлены предсказанные бинарные параметры, показывающие принадлежность к возрастным группам 0 (y0), 1(y1) и 6 (y6),  точность оказалась **75.27%**. При добавлении таких классов происходит переобучение модели.
+ 
  
  увеличить nTree
 

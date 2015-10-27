@@ -28,8 +28,8 @@ require (ROSE) # for oversampling
 
 eval(parse('common.R',encoding = "UTF-8"))
 
-nCores <- detectCores() 
-#nCores <- 4
+#nCores <- detectCores() 
+nCores <- 10 # чтобы уместиться в ОЗУ
 cl<-makeCluster(nCores - 1) # оставляем одно ядро на инфраструктуру и параллельные процессы
 registerDoSNOW(cl) # Register the cores.
 
@@ -144,38 +144,6 @@ qplot (x=predicted, y = dfTrainFull$y)
 ```
 Видим, что модель не очень сильная, особенно плохо работает на редких возрастных группах 0 и 1, но в целом  улавливает тренд.
 
-Построим модель случайный лес, предсказывающую непрерывный возраст. Результат - не лучше линейной модели, но считается долго.
-```{r predictAgeLinearRF, echo=FALSE, eval=FALSE}
-nTree <- 50
-system.time({
-    set.seed(1234)
-    modRFLin <- train (yLin ~ ., method="rf", 
-                    data = dfTrainFull[colFeaturesYLin3], # 
-                    trControl = trainControl(method = "cv", number=10, repeats=5)
-                    #количество деревьев в лесу.
-                    #странно, что при увеличении параметра точность иногда ухудшается, а иногда улучшается
-                    #,ntree= nTree 
-#                     ,tuneGrid = expand.grid(
-#                         prune="no",
-#                         mstop=c(50, 100, 200, 300,500, 1000)
-#                         )
-                     ,tuneLength=3
-    )
-}) # 13 час
-modRFLin 
-ggplot(modRFLin )
-
-
-predicted  <- predict (modRFLin, newdata = dfTestFull)
-qplot (x=predicted, y = dfTestFull$y)
-
-# predicted  <- predict (modGLMBoost, newdata = dfTrainExt)
-# qplot (x=predicted, y = dfTrainExt$y)
-
-predicted  <- predict (modRFLin, newdata = dfTrainFull)
-qplot (x=predicted, y = dfTrainFull$y)
-
-```
 
 Обновим тренировочные и тестовые датафреймы *предсказанными* линейными значениями возраста.
 
@@ -202,6 +170,8 @@ dfTrainFull$y0 <- as.factor(ifelse(dfTrainFull$y==0, 1, 0))
 dfTrainFull$y1 <- as.factor(ifelse(dfTrainFull$y==1, 1, 0))
 dfTrainFull$y6 <- as.factor(ifelse(dfTrainFull$y==6, 1, 0))
 #View(dfTrainFull0)
+
+dfTrainAll$y0 <- as.factor(ifelse(dfTrainAll$y==0, 1, 0))
 
 #dfTrain0 <- dfTrain
 #dfTrain$y0 <- as.factor(ifelse(dfTrain$y==0, 1, 0))
@@ -271,9 +241,13 @@ table(dfTrainAll$y)
 # x39      71.20
 ######
 
-table(dfTrainFull$y0)
-dfTrainFullBalanced0 <- ovun.sample(y0 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
-table(dfTrainFullBalanced0$y0)
+# table(dfTrainFull$y0)
+# dfTrainFullBalanced0 <- ovun.sample(y0 ~ ., data = dfTrainFull, method = "over", p=0.5)$data #oversampling
+# table(dfTrainFullBalanced0$y0)
+
+table(dfTrainAll$y0)
+dfTrainAllBalanced0 <- ovun.sample(y0 ~ ., data = dfTrainAll, method = "over", p=0.5)$data #oversampling
+table(dfTrainAllBalanced0$y0)
 
 system.time({
     set.seed(1234)
@@ -289,8 +263,8 @@ system.time({
                     #data = dfTrain0 [importantFeatures1Y0], #
                     #data = dfTrain0 [c(rows0,rowsNot0Sample), colFeaturesY0], #
                     #data = dfTrainFull0[colFeaturesY0], #
-                    #data = dfTrainExt[importantFeatures1Y0], #
-                    data = dfTrainFullBalanced0, #
+                    data = dfTrainAllBalanced0, 
+                    #data = dfTrainFullBalanced0, #
                     trControl = trainControl(method = "cv", number=10, repeats=3),
                    ## LogitBoost
                     #tuneGrid = data.frame(nIter=c(31))
@@ -309,20 +283,20 @@ mod0
 #ggplot(mod0)
 varImp(mod0)
 
-caret::confusionMatrix(data = predict(mod0, newdata = dfTrainFullBalanced0), 
-                             reference = dfTrainFullBalanced0$y0,
-                             positive="1")
+# caret::confusionMatrix(data = predict(mod0, newdata = dfTrainFullBalanced0), 
+#                              reference = dfTrainFullBalanced0$y0,
+#                              positive="1")
 
 
-predictedTest <- predict (mod0, newdata = dfTestFull)
-#table(predictedTest)
-caret::confusionMatrix(data = predictedTest, 
-                             reference = as.factor(ifelse(dfTestFull$y==0,1,0)),
-                             positive="1")
-
-dfTrainFull$y0 <- predict(mod0, newdata=dfTrainFull)
-dfTestFull$y0 <- predictedTest
-dfTrainAll$y0 <- predict(mod0, newdata=dfTrainAll)
+# predictedTest <- predict (mod0, newdata = dfTestFull)
+# #table(predictedTest)
+# caret::confusionMatrix(data = predictedTest, 
+#                              reference = as.factor(ifelse(dfTestFull$y==0,1,0)),
+#                              positive="1")
+# 
+# dfTrainFull$y0 <- predict(mod0, newdata=dfTrainFull)
+# dfTestFull$y0 <- predictedTest
+ dfTrainAll$y0 <- predict(mod0, newdata=dfTrainAll)
 
 ```
 Среди результатов сначала видим распределение целевого класса (1 = "Возрастная группа = 0", 0 = "Возрастная группа <> 0") до расширения выборки, а потом - после расширения тренировочного набора данных. Расшиение выборки произошло за счет дублирования примеров из класса 1.
@@ -505,8 +479,18 @@ dfTrainAll$y6 <- predict(mod6, newdata=dfTrainAll)
 ```
 
 ```{r trainRandomForest, echo=FALSE, warning=FALSE, message = FALSE, cache=TRUE}
+
+# dfTrainFull$yLin <- ifelse(dfTrainFull$yLin<0,0,dfTrainFull$yLin)
+# dfTrainFull$yLin <- ifelse(dfTrainFull$yLin>6,6,dfTrainFull$yLin)
+# 
+# dfTestFull$yLin <- ifelse(dfTestFull$yLin<0,0,dfTestFull$yLin)
+# dfTestFull$yLin <- ifelse(dfTestFull$yLin>6,6,dfTestFull$yLin)
+
+dfTrainAll$yLin <- ifelse(dfTrainAll$yLin<0,0,dfTrainAll$yLin)
+dfTrainAll$yLin <- ifelse(dfTrainAll$yLin>6,6,dfTrainAll$yLin)
+
 #colnames(dfTrainAll)
-nTree <- 100 #500
+nTree <- 499 #500
 system.time({
     set.seed(1234)
     modRF <- train (y ~ ., method="rf", #rf, C5.0
@@ -519,7 +503,7 @@ system.time({
                     ntree= nTree, 
                     tuneGrid = expand.grid(
                         ## RF
-                        mtry=c(21, 35, 37, 39, 41, 43, 45, 70)
+                        mtry=c(21, 35, 37, 39, 41, 43, 45)
                         ## C5.0
 #                         trials=c(5,10,20),
 #                         model="tree",
@@ -691,7 +675,7 @@ dfFinalTest <- readRDS("../data/test_ConstSubstMedianRange.rds")
 dfFinalTest$yLin <- predict (modGLMBoost, newdata = dfFinalTest)
 dfFinalTest$y0 <- predict (mod0, newdata = dfFinalTest)
 #dfFinalTest$y1 <- predict (mod1, newdata = dfFinalTest)
-dfFinalTest$y6 <- predict (mod6, newdata = dfFinalTest)
+#dfFinalTest$y6 <- predict (mod6, newdata = dfFinalTest)
 
 #table (dfTrainFull$y)
 #apply(dfFinalTest, 2, function(x)sum(is.na(x)))
@@ -720,7 +704,7 @@ dfPredicted <- data.frame (ID = dfFinalTest$ID, y = predicted, stringsAsFactors 
 #View(dfPredicted)
 
 
-write.table(dfPredicted, "../data/151024_sol_CostSubstMedianRange_yLin_y06_All.csv", sep=",", quote=FALSE, row.names=FALSE)
+write.table(dfPredicted, "../data/151028_sol_CostSubstMedianRange_yLin_y0_All.csv", sep=",", quote=FALSE, row.names=FALSE)
 ```
 
 
